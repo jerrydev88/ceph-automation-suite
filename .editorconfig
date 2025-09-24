@@ -1,0 +1,56 @@
+# EditorConfig helps maintain consistent coding styles across different editors
+# https://editorconfig.org
+
+root = true
+
+# 모든 파일에 대한 기본 설정
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# YAML 파일 (Ansible 플레이북, Docker Compose 등)
+[*.{yml,yaml}]
+indent_size = 2
+
+# JSON 파일
+[*.json]
+indent_size = 2
+
+# Markdown 파일
+[*.md]
+trim_trailing_whitespace = false
+indent_size = 2
+
+# Shell 스크립트
+[*.sh]
+indent_size = 2
+
+# Makefile (탭 필수)
+[Makefile]
+indent_style = tab
+indent_size = 4
+
+# Python 파일
+[*.py]
+indent_size = 4
+max_line_length = 120
+
+# TOML 파일 (pyproject.toml 등)
+[*.toml]
+indent_size = 4
+
+# Dockerfile
+[Dockerfile*]
+indent_size = 4
+
+# Git 설정 파일
+[.git*]
+indent_size = 2
+
+# GitHub Actions
+[.github/workflows/*.yml]
+indent_size = 2

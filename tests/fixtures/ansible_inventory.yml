@@ -1,0 +1,47 @@
+---
+# 테스트용 Ansible 인벤토리
+all:
+  children:
+    mons:
+      hosts:
+        test-mon-01:
+          ansible_host: 127.0.0.1
+          ansible_connection: local
+    osds:
+      hosts:
+        test-osd-01:
+          ansible_host: 127.0.0.1
+          ansible_connection: local
+        test-osd-02:
+          ansible_host: 127.0.0.1
+          ansible_connection: local
+    mgrs:
+      hosts:
+        test-mgr-01:
+          ansible_host: 127.0.0.1
+          ansible_connection: local
+    rgws:
+      hosts:
+        test-rgw-01:
+          ansible_host: 127.0.0.1
+          ansible_connection: local
+    grafana-server:
+      hosts:
+        test-grafana-01:
+          ansible_host: 127.0.0.1
+          ansible_connection: local
+
+  vars:
+    # 테스트 모드 설정
+    test_mode: true
+    dry_run: true
+
+    # Ceph 설정
+    ceph_version: pacific
+    cluster_network: 10.0.0.0/24
+    public_network: 192.168.1.0/24
+
+    # 테스트 환경 설정
+    ansible_python_interpreter: /usr/bin/python3
+    gather_facts: false
+    check_mode: true

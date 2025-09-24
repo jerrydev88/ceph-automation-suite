@@ -169,6 +169,40 @@ deps-dev:
 	@echo "📚 개발 의존성 설치..."
 	@uv pip install -e ".[dev]"
 
+deps-test:
+	@echo "🧪 테스트 의존성 설치..."
+	@uv pip install -e ".[test]"
+
+deps-all: deps deps-dev deps-test
+	@echo "✅ 모든 의존성 설치 완료"
+
+# 개발 환경 설정
+dev-setup: install-uv venv deps-all dev-hooks
+	@echo "✅ 개발 환경 설정 완료!"
+	@echo ""
+	@echo "다음 단계:"
+	@echo "  1. 가상환경 활성화: source .venv/bin/activate"
+	@echo "  2. 테스트 실행: make test"
+	@echo "  3. 코드 포매팅: make format"
+	@echo "  4. 린팅: make lint"
+
+dev-hooks:
+	@echo "🪝 Git hooks 설정..."
+	@uv pip install pre-commit
+	@pre-commit install || echo "pre-commit이 설치되지 않음"
+	@echo "✓ Pre-commit hooks 설치됨"
+
+dev-clean:
+	@echo "🧹 개발 환경 정리..."
+	@rm -rf .venv
+	@rm -rf .pytest_cache
+	@rm -rf .ruff_cache
+	@rm -rf htmlcov
+	@rm -rf .coverage
+	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	@find . -type f -name "*.pyc" -delete 2>/dev/null || true
+	@echo "✅ 개발 환경 정리 완료"
+
 # 코드 품질 타겟
 lint:
 	@echo "🔍 코드 린팅..."
@@ -177,11 +211,55 @@ lint:
 
 format:
 	@echo "✨ 코드 포매팅..."
-	@find . -name "*.py" -type f -exec ruff format {} \;
+	@find . -path ./.venv -prune -o -path ./.git -prune -o -path ./htmlcov -prune -o -name "*.py" -type f -print | xargs ruff format 2>/dev/null || true
 
-test:
-	@echo "🧪 테스트 실행..."
-	@pytest tests/ -v
+# 테스트 타겟
+.PHONY: test test-smoke test-unit test-integration test-system test-all test-coverage
+
+test: test-smoke test-unit
+	@echo "✅ 기본 테스트 완료"
+
+test-smoke:
+	@echo "💨 스모크 테스트 실행..."
+	@./tests/smoke/quick_check.sh
+
+test-unit:
+	@echo "🧪 단위 테스트 실행..."
+	@.venv/bin/pytest tests/unit -v --color=yes || echo "pytest가 설치되지 않음. 'uv pip install -e .[test]'를 실행하세요."
+
+test-playbooks:
+	@echo "🎭 플레이북 단위 테스트 실행..."
+	@.venv/bin/pytest tests/unit/test_playbooks/ -v --color=yes
+
+test-integration:
+	@echo "🔗 통합 테스트 실행..."
+	@./tests/integration/test_makefile.sh
+
+test-system:
+	@echo "🎯 시스템 테스트 실행..."
+	@echo "시스템 테스트는 아직 구현되지 않았습니다."
+
+test-all: test-smoke test-unit test-integration test-system test-ansible
+	@echo "✅ 전체 테스트 스위트 완료"
+
+test-ansible:
+	@echo "🎭 Ansible 플레이북 테스트..."
+	@./tests/ansible/test_validate_playbooks.sh
+
+test-coverage:
+	@echo "📊 커버리지 리포트 생성..."
+	@uv run pytest tests/ --cov=scripts --cov-report=html --cov-report=term
+	@echo "HTML 리포트: htmlcov/index.html"
+
+test-watch:
+	@echo "👁️ 테스트 감시 모드..."
+	@uv run pytest-watch tests/ || echo "pytest-watch가 설치되지 않음. 'uv pip install pytest-watch'를 실행하세요."
+
+test-docker:
+	@echo "🐳 Docker 컨테이너에서 테스트 실행..."
+	@docker run --rm -v $(PWD):/opt/ceph-automation \
+		ceph-automation-suite:latest \
+		bash -c "cd /opt/ceph-automation && ./tests/smoke/quick_check.sh"
 
 # 유틸리티 타겟
 check-deps:

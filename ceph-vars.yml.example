@@ -1,0 +1,92 @@
+# Ceph 클러스터 설정 변수 예제
+# 실제 사용 시 이 파일을 ceph-vars.yml로 복사하고 환경에 맞게 수정하세요
+# cp ceph-vars.yml.example ceph-vars.yml
+
+ceph:
+  global:
+    mon_max_pg_per_osd: 300
+
+  cephfs:
+    - name: fs-oa
+      mds:
+        count: 1
+
+  rgw:
+    - realm: default
+      zonegroup: default
+      zone: default
+      service_name: rgw-oa
+      count: 1
+      gateway:
+        s3_url: "http://10.10.2.91:80"  # 실제 RGW 엔드포인트로 변경
+      users:
+        - user_id: "admin"
+          display_name: "Admin User"
+          email: "admin@example.com"  # 실제 이메일로 변경
+          buckets:
+            - name: "admin-bucket1"
+              permissions: "read, write, delete"
+              quota: "80GB"
+            - name: "admin-bucket2"
+              permissions: "read, write, delete"
+              quota: "10GB"
+          caps:
+            - type: "buckets"
+              perm: "read, write, delete"
+            - type: "metadata"
+              perm: "read"
+            - type: "usage"
+              perm: "read"
+            - type: "zone"
+              perm: "read"
+        - user_id: "user1"
+          display_name: "Regular User"
+          email: "user@example.com"  # 실제 이메일로 변경
+          buckets:
+            - name: "user-bucket1"
+              permissions: "read, write, delete"
+              quota: "10GB"
+          caps:
+            - type: "buckets"
+              perm: "read, write, delete"
+            - type: "metadata"
+              perm: "read"
+            - type: "usage"
+              perm: "read"
+            - type: "zone"
+              perm: "read"
+
+  # 결과 파일 경로 (변경 불필요)
+  rgw_user_creation_result_file: "playbooks/02-services/ceph-rgw-users-creation-results.csv"
+  rgw_bucket_creation_result_file: "playbooks/02-services/ceph-rgw-buckets-creation-results.txt"
+
+  rbd:
+    - pool_name: rbd-oa
+      pool_pg_num: 16
+      images: []
+      # RBD 이미지가 필요한 경우 주석 해제하고 설정
+      #images:
+      #  - image_name: image1
+      #    size: 20G
+      #    image_format: 2
+      #    object_size: 4M
+      #    image_features:
+      #      - layering
+
+  csi:
+    - cluster_name: "k8sdev"  # Kubernetes 클러스터 이름으로 변경
+      ceph_csi_user: "csi-rbd-user"
+      caps:
+        mon: "profile rbd"
+        osd: "profile rbd pool=rbd-oa"
+        mgr: "profile rbd pool=rbd-oa"
+    - cluster_name: "k8sdev"  # Kubernetes 클러스터 이름으로 변경
+      ceph_csi_user: "csi-rbd-admin"
+      caps:
+        mds: "allow *"
+        mgr: "allow *"
+        mon: "allow *"
+        osd: "allow * pool=rbd-oa"
+
+  # 결과 파일 경로 (변경 불필요)
+  csi_user_creation_result_file: "playbooks/02-services/ceph-csi-users-creation-results.txt"
