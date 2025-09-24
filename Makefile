@@ -52,52 +52,51 @@ help:
 	@echo "  make check-deps     - 의존성 확인"
 	@echo "  make update-deps    - 의존성 업데이트"
 	@echo "  make size           - Docker 이미지 크기 확인"
+	@echo "  make import-to-container - Docker 이미지를 macOS Container로 가져오기"
 
-# 컨테이너 타겟 (Docker/macOS Container 자동 감지)
+# 컨테이너 타겟 (Docker Buildx로 통일 빌드)
 build:
-ifeq ($(CONTAINER_RUNTIME),container)
-	@echo "🍎 macOS Container로 이미지 빌드 중..."
-	@container build -t ceph-automation-suite:latest .
-else
-	@echo "🐳 Docker Buildx로 이미지 빌드 중..."
+	@echo "🔨 Docker Buildx로 이미지 빌드 중..."
 	@docker buildx build -t ceph-automation-suite:latest .
+ifeq ($(CONTAINER_RUNTIME),container)
+	@echo "🍎 macOS Container로 이미지 가져오기..."
+	@docker save ceph-automation-suite:latest -o /tmp/ceph-automation-suite.tar
+	@container images load -i /tmp/ceph-automation-suite.tar
+	@rm -f /tmp/ceph-automation-suite.tar
 endif
 
 build-cache:
-ifeq ($(CONTAINER_RUNTIME),container)
-    ifdef CONTAINER_COMPOSE_EXISTS
-	@echo "🍎 Container-Compose로 이미지 빌드 중 (캐시 사용)..."
-	@$(COMPOSE_CMD) build
-    else
-	@echo "🍎 macOS Container로 이미지 빌드 중 (캐시 사용)..."
-	@container build -t ceph-automation-suite:latest .
-    endif
-else
-	@echo "🐳 Docker Buildx로 이미지 빌드 중 (캐시 사용)..."
+	@echo "🔨 Docker Buildx로 이미지 빌드 중 (캐시 사용)..."
 	@docker buildx build -t ceph-automation-suite:latest .
+ifeq ($(CONTAINER_RUNTIME),container)
+	@echo "🍎 macOS Container로 이미지 가져오기..."
+	@docker save ceph-automation-suite:latest -o /tmp/ceph-automation-suite.tar
+	@container images load -i /tmp/ceph-automation-suite.tar
+	@rm -f /tmp/ceph-automation-suite.tar
 endif
 
 run:
 ifeq ($(CONTAINER_RUNTIME),container)
-    ifdef CONTAINER_COMPOSE_EXISTS
-	@echo "🍎 Container-Compose로 실행..."
-	@$(COMPOSE_CMD) run --rm ceph-automation bash
-    else
 	@echo "🍎 macOS Container로 실행..."
-	@./scripts/macos-container-run.sh
-    endif
+	@container run --rm -it \
+		-v $(PWD)/inventory:/opt/ceph-automation/inventory \
+		-v ~/.ssh:/home/ansible/.ssh:ro \
+		docker.io/library/ceph-automation-suite:latest bash
 else
 	@echo "🐳 Docker로 컨테이너 실행..."
-	@docker-compose run --rm ceph-automation bash
+	@docker run --rm -it \
+		-v $(PWD)/inventory:/opt/ceph-automation/inventory \
+		-v ~/.ssh:/home/ansible/.ssh:ro \
+		ceph-automation-suite:latest bash
 endif
 
 shell:
 ifeq ($(CONTAINER_RUNTIME),container)
 	@echo "🍎 macOS Container 쉘 접속..."
-	@container exec -it ceph-auto bash
+	@container exec -it ceph-automation bash
 else
 	@echo "🐳 Docker 컨테이너 쉘 접속..."
-	@docker-compose exec ceph-automation bash
+	@docker exec -it ceph-automation bash
 endif
 
 deploy:
@@ -106,12 +105,15 @@ ifeq ($(CONTAINER_RUNTIME),container)
 	@container run --rm \
 		-v $(PWD)/inventory:/opt/ceph-automation/inventory \
 		-v ~/.ssh:/home/ansible/.ssh:ro \
-		ceph-automation-suite:latest \
+		docker.io/library/ceph-automation-suite:latest \
 		ansible-playbook -i inventory/hosts-scalable.yml \
 		playbooks/01-deployment/complete-deployment-docker.yml
 else
 	@echo "🐳 Docker로 Ceph 클러스터 배포..."
-	@docker-compose run --rm ceph-automation \
+	@docker run --rm \
+		-v $(PWD)/inventory:/opt/ceph-automation/inventory \
+		-v ~/.ssh:/home/ansible/.ssh:ro \
+		ceph-automation-suite:latest \
 		ansible-playbook -i inventory/hosts-scalable.yml \
 		playbooks/01-deployment/complete-deployment-docker.yml
 endif
@@ -121,12 +123,14 @@ ifeq ($(CONTAINER_RUNTIME),container)
 	@echo "🍎 macOS Container로 클러스터 검증..."
 	@container run --rm \
 		-v $(PWD)/inventory:/opt/ceph-automation/inventory \
-		ceph-automation-suite:latest \
+		docker.io/library/ceph-automation-suite:latest \
 		ansible-playbook -i inventory/hosts-scalable.yml \
 		playbooks/04-validation/validate-all.yml
 else
 	@echo "🐳 Docker로 클러스터 검증..."
-	@docker-compose run --rm ceph-automation \
+	@docker run --rm \
+		-v $(PWD)/inventory:/opt/ceph-automation/inventory \
+		ceph-automation-suite:latest \
 		ansible-playbook -i inventory/hosts-scalable.yml \
 		playbooks/04-validation/validate-all.yml
 endif
@@ -192,6 +196,17 @@ clean-docker:
 	@echo "🐳 Docker 클린업..."
 	@docker-compose down -v 2>/dev/null || true
 	@docker rmi ceph-automation-suite:latest 2>/dev/null || true
+ifeq ($(CONTAINER_RUNTIME),container)
+	@echo "🍎 Container 이미지 클린업..."
+	@container images rm docker.io/library/ceph-automation-suite:latest 2>/dev/null || true
+endif
+
+# Docker에서 Container로 이미지 가져오기
+import-to-container:
+	@echo "📦 Docker 이미지를 Container로 가져오기..."
+	@docker save ceph-automation-suite:latest -o /tmp/ceph-automation-suite.tar
+	@container images load -i /tmp/ceph-automation-suite.tar
+	@rm -f /tmp/ceph-automation-suite.tar
 
 # 캐시 디렉토리 생성
 cache-dir:
