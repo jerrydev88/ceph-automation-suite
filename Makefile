@@ -59,8 +59,8 @@ ifeq ($(CONTAINER_RUNTIME),container)
 	@echo "🍎 macOS Container로 이미지 빌드 중..."
 	@container build -t ceph-automation-suite:latest .
 else
-	@echo "🐳 Docker로 이미지 빌드 중..."
-	@DOCKER_BUILDKIT=1 docker-compose build --no-cache
+	@echo "🐳 Docker Buildx로 이미지 빌드 중..."
+	@docker buildx build -t ceph-automation-suite:latest .
 endif
 
 build-cache:
@@ -73,8 +73,8 @@ ifeq ($(CONTAINER_RUNTIME),container)
 	@container build -t ceph-automation-suite:latest .
     endif
 else
-	@echo "🐳 Docker로 이미지 빌드 중 (캐시 사용)..."
-	@DOCKER_BUILDKIT=1 docker-compose build
+	@echo "🐳 Docker Buildx로 이미지 빌드 중 (캐시 사용)..."
+	@docker buildx build -t ceph-automation-suite:latest .
 endif
 
 run:
@@ -178,7 +178,7 @@ update-deps:
 
 size:
 	@echo "📊 Docker 이미지 크기:"
-	@docker images ceph-automation-suite:optimized --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
+	@docker images ceph-automation-suite:latest --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
 
 clean:
 	@echo "🧹 클린업..."
@@ -190,8 +190,8 @@ clean:
 
 clean-docker:
 	@echo "🐳 Docker 클린업..."
-	@docker-compose down -v
-	@docker rmi ceph-automation-suite:optimized 2>/dev/null || true
+	@docker-compose down -v 2>/dev/null || true
+	@docker rmi ceph-automation-suite:latest 2>/dev/null || true
 
 # 캐시 디렉토리 생성
 cache-dir:
