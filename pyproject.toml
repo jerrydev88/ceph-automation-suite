@@ -3,7 +3,7 @@ name = "ceph-automation-suite"
 version = "1.0.0"
 description = "Ceph 클러스터 운영을 위한 고급 Ansible 플레이북 모음"
 authors = [
-    { name = "Jerry", email = "jerrydev@mocomsys.com" }
+    { name = "Jerry", email = "pigeon@mocomsys.com" }
 ]
 readme = "README.md"
 license = { text = "Apache-2.0" }

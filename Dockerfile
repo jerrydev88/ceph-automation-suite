@@ -30,7 +30,7 @@ RUN git clone --depth 1 --branch v3.1.0 https://github.com/ceph/cephadm-ansible.
 # ===== Stage 3: 최종 런타임 이미지 =====
 FROM python:3.11-alpine
 
-LABEL maintainer="jerrydev@mocomsys.com"
+LABEL maintainer="pigeon@mocomsys.com"
 LABEL description="Ceph Automation Suite with embedded cephadm-ansible (Alpine)"
 LABEL version="1.0.0"
 

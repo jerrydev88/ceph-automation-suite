@@ -332,7 +332,7 @@ ansible-playbook -i inventory/hosts-scalable.yml \
 
 **버전**: 1.0.0
 **마지막 업데이트**: 2025-09-24
-**작성자**: Jerry (jerrydev@mocomsys.com)
+**작성자**: Jerry (pigeon@mocomsys.com)
 **라이선스**: Apache-2.0
 
 ### 주요 기능
