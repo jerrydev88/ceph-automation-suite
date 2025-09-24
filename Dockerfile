@@ -8,9 +8,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Python 의존성 파일 복사
-COPY pyproject.toml .
+COPY pyproject.toml README.md CLAUDE.md ./
 
 # UV를 사용한 의존성 설치 (.venv에 설치)
+# pyproject.toml의 의존성을 설치 (editable 모드로 설치)
 RUN uv venv .venv && \
     uv pip install --python .venv/bin/python -e .
 
@@ -60,13 +61,17 @@ WORKDIR /opt/ceph-automation
 # Stage 1에서 빌드한 Python 가상환경 복사
 COPY --from=uv-builder --chown=ansible:ansible /app/.venv /opt/ceph-automation/.venv
 
+# venv 경로 수정 (shebang 업데이트)
+RUN find /opt/ceph-automation/.venv/bin -type f -exec sed -i 's|/app/.venv|/opt/ceph-automation/.venv|g' {} \;
+
 # Stage 2에서 클론한 cephadm-ansible 복사
 COPY --from=cephadm-builder --chown=ansible:ansible /opt/cephadm-ansible /opt/cephadm-ansible
 
-# cephadm-ansible 의존성 설치 (가상환경 사용)
-RUN if [ -f /opt/cephadm-ansible/requirements.txt ]; then \
-        /opt/ceph-automation/.venv/bin/pip install --no-cache-dir -r /opt/cephadm-ansible/requirements.txt; \
-    fi
+# UV 바이너리 복사 (추가 패키지 설치가 필요한 경우를 위해)
+COPY --from=uv-builder /usr/local/bin/uv /usr/local/bin/uv
+
+# cephadm-ansible의 추가 의존성 설치 (필요시)
+# pyproject.toml에 이미 ansible 관련 의존성이 포함되어 있으므로 별도 설치 불필요
 
 # Ceph Automation Suite 복사
 COPY --chown=ansible:ansible . /opt/ceph-automation/

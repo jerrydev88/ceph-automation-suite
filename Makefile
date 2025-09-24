@@ -1,7 +1,15 @@
 .PHONY: help build run shell deploy validate clean lint format test
 
+# 쉘 설정 (macOS에서 zsh 사용)
+SHELL := /bin/zsh
+
 # 컨테이너 런타임 감지
-CONTAINER_RUNTIME := $(shell command -v container 2>/dev/null && echo "container" || echo "docker")
+CONTAINER_CHECK := $(shell command -v container 2>/dev/null)
+ifdef CONTAINER_CHECK
+    CONTAINER_RUNTIME := container
+else
+    CONTAINER_RUNTIME := docker
+endif
 
 # Compose 도구 감지
 ifeq ($(CONTAINER_RUNTIME),container)
@@ -48,13 +56,8 @@ help:
 # 컨테이너 타겟 (Docker/macOS Container 자동 감지)
 build:
 ifeq ($(CONTAINER_RUNTIME),container)
-    ifdef CONTAINER_COMPOSE_EXISTS
-	@echo "🍎 Container-Compose로 이미지 빌드 중..."
-	@$(COMPOSE_CMD) build --no-cache
-    else
 	@echo "🍎 macOS Container로 이미지 빌드 중..."
-	@./scripts/macos-container-build.sh
-    endif
+	@container build -t ceph-automation-suite:latest .
 else
 	@echo "🐳 Docker로 이미지 빌드 중..."
 	@DOCKER_BUILDKIT=1 docker-compose build --no-cache
