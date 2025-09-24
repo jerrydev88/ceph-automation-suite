@@ -1,6 +1,6 @@
 [project]
 name = "ceph-automation-suite"
-version = "1.0.0"
+version = "0.0.1"
 description = "Ceph 클러스터 운영을 위한 고급 Ansible 플레이북 모음"
 authors = [
     { name = "Jerry", email = "pigeon@mocomsys.com" }

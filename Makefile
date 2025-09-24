@@ -1,5 +1,8 @@
 .PHONY: help build run shell deploy validate clean lint format test
 
+# 버전 정보 (VERSION 파일에서 읽기)
+VERSION := $(shell cat VERSION 2>/dev/null || echo "0.0.1")
+
 # 쉘 설정 (macOS에서 zsh 사용)
 SHELL := /bin/zsh
 
@@ -53,11 +56,20 @@ help:
 	@echo "  make update-deps    - 의존성 업데이트"
 	@echo "  make size           - Docker 이미지 크기 확인"
 	@echo "  make import-to-container - Docker 이미지를 macOS Container로 가져오기"
+	@echo ""
+	@echo "버전 관리:"
+	@echo "  make version        - 현재 버전 확인"
+	@echo "  make bump-patch     - 패치 버전 증가 (0.0.x)"
+	@echo "  make bump-minor     - 마이너 버전 증가 (0.x.0)"
+	@echo "  make bump-major     - 메이저 버전 증가 (x.0.0)"
+	@echo "  make release-patch  - 패치 릴리스 (bump + commit + tag)"
+	@echo "  make release-minor  - 마이너 릴리스 (bump + commit + tag)"
+	@echo "  make release-major  - 메이저 릴리스 (bump + commit + tag)"
 
 # 컨테이너 타겟 (Docker Buildx로 통일 빌드)
 build:
-	@echo "🔨 Docker Buildx로 이미지 빌드 중..."
-	@docker buildx build -t ceph-automation-suite:latest .
+	@echo "🔨 Docker Buildx로 이미지 빌드 중 (v$(VERSION))..."
+	@docker buildx build --build-arg VERSION=$(VERSION) -t ceph-automation-suite:$(VERSION) -t ceph-automation-suite:latest .
 ifeq ($(CONTAINER_RUNTIME),container)
 	@echo "🍎 macOS Container로 이미지 가져오기..."
 	@docker save ceph-automation-suite:latest -o /tmp/ceph-automation-suite.tar
@@ -66,8 +78,8 @@ ifeq ($(CONTAINER_RUNTIME),container)
 endif
 
 build-cache:
-	@echo "🔨 Docker Buildx로 이미지 빌드 중 (캐시 사용)..."
-	@docker buildx build -t ceph-automation-suite:latest .
+	@echo "🔨 Docker Buildx로 이미지 빌드 중 (캐시 사용, v$(VERSION))..."
+	@docker buildx build --build-arg VERSION=$(VERSION) -t ceph-automation-suite:$(VERSION) -t ceph-automation-suite:latest .
 ifeq ($(CONTAINER_RUNTIME),container)
 	@echo "🍎 macOS Container로 이미지 가져오기..."
 	@docker save ceph-automation-suite:latest -o /tmp/ceph-automation-suite.tar
@@ -186,8 +198,9 @@ size:
 
 clean:
 	@echo "🧹 클린업..."
-	@rm -rf .venv __pycache__ *.pyc .pytest_cache .ansible-cache
-	@rm -rf logs/*.log
+	@rm -rf .venv __pycache__ .pytest_cache .ansible-cache
+	@rm -f *.pyc 2>/dev/null || true
+	@rm -f logs/*.log 2>/dev/null || true
 	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	@find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	@docker-compose down -v 2>/dev/null || true
@@ -222,6 +235,50 @@ init-inventory:
 init: cache-dir init-inventory install
 	@echo "✅ 프로젝트 초기화 완료!"
 
+# 버전 관련 타겟
+version:
+	@echo "현재 버전: v$(VERSION)"
+
+update-version:
+	@echo "📦 버전을 $(VERSION)으로 업데이트 중..."
+	@./scripts/update-version.sh
+	@echo "✅ 버전 업데이트 완료!"
+
+bump-patch:
+	@echo "🔧 Patch 버전 증가..."
+	@./scripts/bump-version.sh patch
+
+bump-minor:
+	@echo "✨ Minor 버전 증가..."
+	@./scripts/bump-version.sh minor
+
+bump-major:
+	@echo "🚀 Major 버전 증가..."
+	@./scripts/bump-version.sh major
+
+release-patch: bump-patch
+	@git add -A
+	@git commit -m "chore: bump version to v$$(cat VERSION)"
+	@git tag -a v$$(cat VERSION) -m "Release v$$(cat VERSION)"
+	@echo "✅ Patch 릴리스 준비 완료! 'git push && git push --tags'로 배포하세요."
+
+release-minor: bump-minor
+	@git add -A
+	@git commit -m "chore: bump version to v$$(cat VERSION)"
+	@git tag -a v$$(cat VERSION) -m "Release v$$(cat VERSION)"
+	@echo "✅ Minor 릴리스 준비 완료! 'git push && git push --tags'로 배포하세요."
+
+release-major: bump-major
+	@git add -A
+	@git commit -m "chore: bump version to v$$(cat VERSION)"
+	@git tag -a v$$(cat VERSION) -m "Release v$$(cat VERSION)"
+	@echo "✅ Major 릴리스 준비 완료! 'git push && git push --tags'로 배포하세요."
+
+tag:
+	@echo "🏷️  Git 태그 v$(VERSION) 추가..."
+	@git tag -a v$(VERSION) -m "Release v$(VERSION)"
+	@echo "✅ 태그 생성 완료! 'git push --tags'로 푸시할 수 있습니다."
+
 # Container-Compose 관련
 install-container-compose:
 	@echo "📦 Container-Compose 설치..."
@@ -247,14 +304,24 @@ endif
 
 compose-ps:
 ifdef CONTAINER_COMPOSE_EXISTS
-	@$(COMPOSE_CMD) ps
+ifeq ($(CONTAINER_RUNTIME),container)
+	@echo "⚠️  Container-Compose는 'ps' 명령을 지원하지 않습니다."
+	@echo "대신 'container ps'를 사용하세요."
+else
+	@docker-compose ps
+endif
 else
 	@echo "⚠️  Container-Compose가 설치되지 않았습니다."
 endif
 
 compose-logs:
 ifdef CONTAINER_COMPOSE_EXISTS
-	@$(COMPOSE_CMD) logs -f
+ifeq ($(CONTAINER_RUNTIME),container)
+	@echo "⚠️  Container-Compose는 'logs' 명령을 지원하지 않습니다."
+	@echo "대신 'container logs <container-name>'을 사용하세요."
+else
+	@docker-compose logs -f
+endif
 else
 	@echo "⚠️  Container-Compose가 설치되지 않았습니다."
 endif
