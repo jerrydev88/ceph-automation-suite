@@ -1,0 +1,16 @@
+---
+- hosts: mons
+  become: true
+  tasks:
+    - name: Create a snapshot for a specific RBD image
+      command: rbd snap create {{ rbd_image }}@{{ snapshot_name }}
+
+    - name: Check if snapshot was created
+      command: rbd snap ls {{ rbd_image }}
+      register: snapshot_check
+      changed_when: false
+
+    - name: Show newly created snapshot
+      debug:
+        msg: "{{ snapshot_check.stdout_lines }}"
+

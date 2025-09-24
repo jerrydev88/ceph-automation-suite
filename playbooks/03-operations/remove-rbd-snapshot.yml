@@ -1,0 +1,16 @@
+---
+- hosts: mons
+  become: true
+  tasks:
+    - name: Remove a snapshot from a specific RBD image
+      command: rbd snap rm {{ rbd_image }}@{{ snapshot_name }}
+
+    - name: Verify snapshot is removed
+      command: rbd snap ls {{ rbd_image }}
+      register: snapshots_after_removal
+      changed_when: false
+
+    - name: Show remaining snapshots
+      debug:
+        msg: "{{ snapshots_after_removal.stdout_lines }}"
+

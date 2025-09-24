@@ -1,0 +1,140 @@
+---
+# Docker 환경을 위한 Complete Ceph Deployment Playbook
+# cephadm-ansible 의존성을 Docker 내부에서 해결
+#
+# 사용법:
+# docker-compose run ceph-automation ansible-playbook -i inventory/hosts-scalable.yml playbooks/01-deployment/complete-deployment-docker.yml
+
+- name: Complete Ceph Cluster Deployment (Docker Version)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    dashboard_user: "mocomsys"
+    dashboard_password: "mocomsys1$"
+    # Docker 환경에서 cephadm-ansible 경로
+    cephadm_ansible_path: "/opt/cephadm-ansible"
+
+  tasks:
+    - name: Display deployment plan
+      debug:
+        msg: |
+          ========================================
+          Complete Ceph Deployment (Docker Version)
+          ========================================
+          1. Ubuntu 24.04 Fix
+          2. Preflight Setup (from cephadm-ansible)
+          3. Bootstrap Cluster
+          4. Post-Bootstrap Configuration
+          5. Configure Storage Services
+          ========================================
+
+    - name: Check cephadm-ansible availability
+      stat:
+        path: "{{ cephadm_ansible_path }}/cephadm-preflight.yml"
+      register: cephadm_check
+
+    - name: Verify cephadm-ansible is installed
+      fail:
+        msg: "cephadm-ansible not found at {{ cephadm_ansible_path }}"
+      when: not cephadm_check.stat.exists
+
+# Step 1: Ubuntu 24.04 Fix
+- name: Fix Ubuntu 24.04 cephadm issue
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Create /var/lib/cephadm directory
+      file:
+        path: /var/lib/cephadm
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Fix any broken cephadm packages
+      shell: |
+        if dpkg -l | grep -E "^[a-z]F.*cephadm"; then
+          dpkg --configure -a || true
+        fi
+      when: ansible_facts['os_family'] == "Debian"
+      register: dpkg_fix
+      changed_when: "'Setting up cephadm' in dpkg_fix.stdout"
+
+# Step 2: Preflight (cephadm-ansible 사용)
+- name: Run cephadm-ansible preflight
+  import_playbook: /opt/cephadm-ansible/cephadm-preflight.yml
+  vars:
+    ceph_origin: distro
+
+# Step 3: Bootstrap
+- name: Bootstrap Ceph cluster
+  import_playbook: bootstrap.yml
+
+# Step 4: Post-Bootstrap
+- name: Post-bootstrap configuration
+  import_playbook: post-bootstrap.yml
+
+# Step 5: Service Configuration
+- name: Configure CephFS
+  import_playbook: ../02-services/configure-cephfs.yml
+
+- name: Configure RGW
+  import_playbook: ../02-services/configure-rgw.yml
+
+- name: Configure RBD
+  import_playbook: ../02-services/configure-rbd.yml
+
+# Step 6: Optional - RGW Users and Buckets
+- name: Check if RGW users configuration exists
+  hosts: localhost
+  tasks:
+    - name: Check for RGW users playbook
+      stat:
+        path: "{{ playbook_dir }}/../02-services/rgw-users.yml"
+      register: rgw_users_file
+
+    - name: Check for RGW buckets playbook
+      stat:
+        path: "{{ playbook_dir }}/../02-services/rgw-buckets.yml"
+      register: rgw_buckets_file
+
+- name: Configure RGW users
+  import_playbook: ../02-services/rgw-users.yml
+  when: rgw_users_file.stat.exists | default(false)
+
+- name: Configure RGW buckets
+  import_playbook: ../02-services/rgw-buckets.yml
+  when: rgw_buckets_file.stat.exists | default(false)
+
+# Step 7: Optional - CSI Users for Kubernetes
+- name: Check if CSI users configuration exists
+  hosts: localhost
+  tasks:
+    - name: Check for CSI users playbook
+      stat:
+        path: "{{ playbook_dir }}/../02-services/csi-users.yml"
+      register: csi_users_file
+
+- name: Configure CSI users
+  import_playbook: ../02-services/csi-users.yml
+  when: csi_users_file.stat.exists | default(false)
+
+# Final Summary
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Display completion message
+      debug:
+        msg: |
+          ========================================
+          Ceph Cluster Deployment Complete!
+          ========================================
+
+          다음 명령어로 클러스터 상태를 확인하세요:
+          ansible-playbook -i inventory/hosts-scalable.yml playbooks/04-validation/validate-all.yml
+
+          또는 Docker 컨테이너 내에서:
+          docker-compose run ceph-automation ansible-playbook -i inventory/hosts-scalable.yml playbooks/04-validation/validate-all.yml
+          ========================================

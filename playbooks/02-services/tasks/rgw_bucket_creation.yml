@@ -1,0 +1,55 @@
+---
+- name: Read RGW user keys from local file
+  delegate_to: localhost
+  become: false
+  ansible.builtin.slurp:
+    src: "{{ ceph.rgw_user_creation_result_file }}"
+  register: rgw_user_keys_content
+
+- name: Decode file content and parse CSV
+  set_fact:
+    rgw_user_keys: "{{ (rgw_user_keys_content['content'] | b64decode).split('\n')[1:] | list }}"
+
+- name: Filter out the header and empty lines
+  set_fact:
+    rgw_user_keys: "{{ rgw_user_keys | select('match', '^[^,]+,[^,]+,[^,]+,[^,]+,[^,]+$') | list }}"
+- name: Prepare bucket tasks
+  set_fact:
+    bucket_tasks: "{{ bucket_tasks | default([]) + 
+      [{'user_id': item.0.user_id, 'bucket': item.1, 'key': key}] }}"
+  with_subelements:
+    - "{{ rgw_instance.users }}"
+    - buckets
+  vars:
+    key: "{{ rgw_user_keys | select('search', item.0.user_id) | first }}"
+
+- name: Create S3 buckets on Ceph RGW
+  amazon.aws.s3_bucket:
+    name: "{{ item.bucket.name }}"
+    acl: "private"
+    endpoint_url: "{{ rgw_instance.gateway.s3_url }}"
+    aws_access_key: "{{ item.key.split(',')[3].strip() }}"
+    aws_secret_key: "{{ item.key.split(',')[4].strip() }}"
+    validate_certs: no
+    state: present
+  delegate_to: localhost
+  become: false
+  loop: "{{ bucket_tasks }}"
+  loop_control:
+    label: "{{ item.user_id }} - {{ item.bucket.name }}"
+  register: bucket_creation
+
+- name: Log bucket creation results
+  debug:
+    msg: "Bucket creation result for {{ item.item.user_id }} - {{ item.item.bucket.name }}: {{ item }}"
+  loop: "{{ bucket_creation.results }}"
+  when: bucket_creation.changed
+
+- name: Link bucket to user
+  command: >
+    radosgw-admin bucket link --bucket="{{ item.bucket.name }}"
+                              --uid="{{ item.user_id }}"
+  loop: "{{ bucket_tasks }}"
+  loop_control:
+    label: "{{ item.user_id }} - {{ item.bucket.name }}"
+

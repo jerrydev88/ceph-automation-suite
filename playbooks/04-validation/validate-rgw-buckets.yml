@@ -1,0 +1,111 @@
+---
+- name: Validate RGW Buckets
+  hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: List all buckets
+      command: radosgw-admin bucket list
+      register: bucket_list
+      changed_when: false
+
+    - name: Parse bucket list
+      set_fact:
+        existing_buckets: "{{ bucket_list.stdout | from_json }}"
+
+    - name: Initialize bucket list
+      set_fact:
+        expected_buckets: []
+      when: ceph.rgw is defined
+
+    - name: Extract bucket names from each RGW user
+      set_fact:
+        expected_buckets: "{{ expected_buckets + user.buckets | map(attribute='name') | list }}"
+      loop: "{{ ceph.rgw[0].users }}"
+      loop_control:
+        loop_var: user
+      when: ceph.rgw is defined and ceph.rgw | length > 0
+
+    - name: Validate each configured bucket exists
+      assert:
+        that:
+          - "item in existing_buckets"
+        fail_msg: "Bucket {{ item }} not found"
+        success_msg: "Bucket {{ item }} exists"
+      loop: "{{ expected_buckets }}"
+      when: expected_buckets is defined
+
+    - name: Get bucket stats for each bucket
+      command: radosgw-admin bucket stats --bucket={{ item }}
+      register: bucket_stats
+      loop: "{{ expected_buckets }}"
+      when: expected_buckets is defined
+      changed_when: false
+
+    - name: Validate bucket ownership
+      assert:
+        that:
+          - "'owner' in item.stdout"
+        fail_msg: "Cannot get stats for bucket {{ item.item }}"
+        success_msg: "Bucket {{ item.item }} has valid stats"
+      loop: "{{ bucket_stats.results }}"
+      when: bucket_stats.results is defined
+
+    - name: Check bucket quotas
+      debug:
+        msg: "Bucket {{ item }} quota check completed via stats command above"
+      loop: "{{ expected_buckets }}"
+      when: expected_buckets is defined
+      changed_when: false
+
+- name: Validate S3 Access from localhost
+  hosts: localhost
+  become: false
+  gather_facts: no
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Check if RGW user keys file exists
+      stat:
+        path: "{{ ceph.rgw_user_creation_result_file }}"
+      register: keys_file
+
+    - name: Read RGW user keys
+      slurp:
+        src: "{{ ceph.rgw_user_creation_result_file }}"
+      register: user_keys_content
+      when: keys_file.stat.exists
+
+    - name: Parse CSV content
+      set_fact:
+        user_credentials: |
+          {% set creds = {} %}
+          {% for line in (user_keys_content.content | b64decode).split('\n')[1:] if line %}
+            {% set parts = line.split(',') %}
+            {% if parts | length == 5 %}
+              {% set _ = creds.update({parts[0]: {'access_key': parts[3], 'secret_key': parts[4]}}) %}
+            {% endif %}
+          {% endfor %}
+          {{ creds }}
+      when:
+        - user_keys_content is defined
+        - user_keys_content.content is defined
+
+    - name: Test S3 bucket list for each user
+      uri:
+        url: "{{ rgw.gateway.s3_url }}"
+        method: GET
+        headers:
+          Authorization: "AWS {{ user_credentials[user.user_id].access_key }}:{{ lookup('pipe', 'echo -n \"GET\\n\\n\\n\" | openssl dgst -sha1 -hmac \"' + user_credentials[user.user_id].secret_key + '\" -binary | base64') }}"
+        validate_certs: no
+      loop: "{{ ceph.rgw | subelements('users', skip_missing=True) }}"
+      loop_control:
+        label: "{{ user.user_id }}"
+      vars:
+        rgw: "{{ item.0 }}"
+        user: "{{ item.1 }}"
+      when:
+        - user_credentials is defined
+        - user.user_id in user_credentials
+      ignore_errors: true

@@ -1,0 +1,36 @@
+---
+- hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: RBD 풀 생성
+      command: "ceph osd pool create {{ item.pool_name }} {{ item.pool_pg_num }} {{ item.pool_pg_num }}"
+      loop: "{{ ceph.rbd }}"
+      when: ceph.rbd is defined and ceph.rbd | length > 0
+      loop_control:
+        label: "{{ item.pool_name }}"
+
+    - name: RBD 풀 초기화
+      command: "rbd pool init {{ item.pool_name }}"
+      loop: "{{ ceph.rbd }}"
+      when: ceph.rbd is defined and ceph.rbd | length > 0
+      loop_control:
+        label: "{{ item.pool_name }}"
+
+    - name: RBD 이미지 생성
+      command: >
+        rbd create {{ item.0.pool_name }}/{{ item.1.image_name }}
+        --size {{ item.1.size }}
+        --image-format {{ item.1.image_format }}
+        --object-size {{ item.1.object_size }}
+        {% for feature in item.1.image_features %}
+        --image-feature {{ feature }}
+        {% endfor %}
+      loop: "{{ ceph.rbd | subelements('images', skip_missing=True) }}"
+      when: 
+        - ceph.rbd is defined
+        - ceph.rbd | length > 0
+      loop_control:
+        label: "{{ item.0.pool_name }}/{{ item.1.image_name }}"
+

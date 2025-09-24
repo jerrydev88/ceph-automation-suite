@@ -1,0 +1,4 @@
+[client.csi-rbd-user]
+	key = AQAfVdJoIjU9FhAAup8LmttMIhfG9KRzRW03GQ==
+[client.csi-rbd-admin]
+	key = AQAgVdJo7JuMJxAAJz8+dLE+1SJ3OpB/yCnpIA==

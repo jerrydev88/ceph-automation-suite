@@ -1,0 +1,59 @@
+---
+- name: Setup Environment
+  hosts: all
+  become: true
+  tasks:
+    - name: Ensure pip is installed
+      ansible.builtin.package:
+        name: python3-pip
+        state: present
+
+    - name: Ensure virtualenv is installed
+      ansible.builtin.package:
+        name: python3-venv
+        state: present
+
+    - name: Create a virtual environment
+      ansible.builtin.command:
+        cmd: python3 -m venv /root/cephadm-venv
+      args:
+        creates: /root/cephadm-venv
+
+    - name: Install passlib in the virtual environment
+      ansible.builtin.command:
+        cmd: /root/cephadm-venv/bin/pip install passlib
+
+- name: Enable SSH Access for Root User and Set Password
+  hosts: all
+  become: true
+  vars_files:
+    - ../../secret.yml
+  tasks:
+    - name: Ensure PermitRootLogin is set to yes in sshd_config
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin yes'
+        state: present
+      notify: restart sshd
+
+    - name: Ensure PasswordAuthentication is enabled in sshd_config
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication yes'
+        state: present
+      notify: restart sshd
+
+    - name: Update root user password
+      ansible.builtin.user:
+        name: root
+        password: "{{ root_password | password_hash('sha512') }}"
+      vars:
+        ansible_python_interpreter: /root/cephadm-venv/bin/python
+
+  handlers:
+    - name: restart sshd
+      ansible.builtin.service:
+        name: ssh
+        state: restarted

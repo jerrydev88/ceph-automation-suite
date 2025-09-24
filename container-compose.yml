@@ -1,0 +1,73 @@
+# Container-Compose configuration for macOS native container runtime
+# https://github.com/Mcrich23/Container-Compose
+#
+# 사용법:
+#   container-compose up -d
+#   container-compose run ceph-automation bash
+#   container-compose down
+
+version: '3.8'
+
+services:
+  ceph-automation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ceph-automation-suite:latest
+    container_name: ceph-automation
+    hostname: ceph-automation
+
+    # 환경 변수
+    environment:
+      - ANSIBLE_HOST_KEY_CHECKING=False
+      - ANSIBLE_GATHERING=smart
+      - ANSIBLE_FACT_CACHING=jsonfile
+      - ANSIBLE_FACT_CACHING_CONNECTION=/tmp/ansible-facts
+      - ANSIBLE_FACT_CACHING_TIMEOUT=86400
+      - ANSIBLE_STDOUT_CALLBACK=yaml
+      - ANSIBLE_CALLBACKS_ENABLED=timer,profile_tasks
+      - ANSIBLE_PIPELINING=True
+      - ANSIBLE_SSH_CONTROL_PATH=/tmp/%%h-%%p-%%r
+      - ANSIBLE_SSH_ARGS=-C -o ControlMaster=auto -o ControlPersist=60s
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - UV_CACHE_DIR=/tmp/uv-cache
+
+    # 볼륨 마운트
+    volumes:
+      - ./inventory:/opt/ceph-automation/inventory:rw
+      - ~/.ssh:/home/ansible/.ssh:ro
+      - ./logs:/var/log/ansible:rw
+      - ansible-facts:/tmp/ansible-facts
+      - ./ceph-vars.yml:/opt/ceph-automation/ceph-vars.yml:ro
+
+    # 네트워크
+    networks:
+      - ceph-net
+
+    # 작업 디렉토리
+    working_dir: /opt/ceph-automation
+
+    # 대화형 모드
+    stdin_open: true
+    tty: true
+
+    # 리소스 제한 (선택사항)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+# 볼륨 정의
+volumes:
+  ansible-facts:
+    driver: local
+
+# 네트워크 정의
+networks:
+  ceph-net:
+    driver: bridge

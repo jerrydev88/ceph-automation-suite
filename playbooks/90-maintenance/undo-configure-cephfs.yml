@@ -1,0 +1,65 @@
+---
+# Undo CephFS Configuration
+# Removes CephFS filesystem and related configurations
+#
+# Usage:
+# ansible-playbook -i hosts-scalable.yml playbooks/90-maintenance/undo-configure-cephfs.yml
+
+- name: Undo CephFS Configuration
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../ceph-vars.yml
+
+  tasks:
+    - name: Confirm CephFS removal
+      pause:
+        prompt: "This will remove CephFS '{{ cephfs.fs_name }}'. Type 'yes' to continue"
+      register: confirm_removal
+
+    - name: Check confirmation
+      fail:
+        msg: "Operation cancelled by user"
+      when: confirm_removal.user_input != "yes"
+
+    - name: Check for active CephFS sessions
+      command: ceph fs status {{ cephfs.fs_name }}
+      register: fs_status
+      changed_when: false
+      failed_when: false
+
+    - name: Fail CephFS filesystem
+      command: ceph fs fail {{ cephfs.fs_name }}
+      when: fs_status.rc == 0
+
+    - name: Remove MDS service
+      command: ceph orch rm mds.{{ cephfs.fs_name }}
+      when: fs_status.rc == 0
+      failed_when: false
+
+    - name: Remove CephFS filesystem
+      command: ceph fs rm {{ cephfs.fs_name }} --yes-i-really-mean-it
+      when: fs_status.rc == 0
+      register: fs_removal
+
+    - name: Remove metadata pool
+      command: ceph osd pool rm {{ cephfs.metadata_pool }} {{ cephfs.metadata_pool }} --yes-i-really-really-mean-it
+      failed_when: false
+
+    - name: Remove data pools
+      command: ceph osd pool rm {{ item }} {{ item }} --yes-i-really-really-mean-it
+      loop: "{{ cephfs.data_pools }}"
+      failed_when: false
+
+    - name: Display removal status
+      debug:
+        msg: |
+          ========================================
+          CephFS Configuration Removal Complete
+          ========================================
+          Filesystem removed: {{ cephfs.fs_name }}
+          Metadata pool removed: {{ cephfs.metadata_pool }}
+          Data pools removed: {{ cephfs.data_pools | join(', ') }}
+          Status: {{ fs_removal.stdout | default('Success') }}
+          ========================================

@@ -1,0 +1,164 @@
+---
+# Bootstrap Wrapper Playbook
+# cephadm bootstrap 명령을 Ansible로 래핑
+#
+# 사용법:
+# ansible-playbook -i hosts-scalable.yaml bootstrap-wrapper.yml \
+#   -e dashboard_user=mocomsys \
+#   -e dashboard_password="mocomsys1$"
+
+- name: Ceph Cluster Bootstrap
+  hosts: admin[0]
+  become: true
+  gather_facts: true
+  vars:
+    # Bootstrap 설정 (오버라이드 가능)
+    mon_ip: "{{ hostvars[inventory_hostname]['ansible_host'] | default(ansible_default_ipv4.address) }}"
+    bootstrap_cluster_network: "{{ cluster_network | default(omit) }}"
+    bootstrap_public_network: "{{ public_network | default('10.10.0.0/22') }}"
+    dashboard_user: "{{ dashboard_user | default('admin') }}"
+    dashboard_password: "{{ dashboard_password | default('P@ssw0rd123') }}"
+    allow_fqdn_hostname: true
+    dashboard_password_noupdate: true
+
+    # Bootstrap 옵션
+    bootstrap_opts:
+      - "--mon-ip {{ mon_ip }}"
+      - "--initial-dashboard-user {{ dashboard_user }}"
+      - "--initial-dashboard-password {{ dashboard_password }}"
+      - "{{ '--dashboard-password-noupdate' if dashboard_password_noupdate else '' }}"
+      - "{{ '--allow-fqdn-hostname' if allow_fqdn_hostname else '' }}"
+      - "{{ '--cluster-network ' + bootstrap_cluster_network if bootstrap_cluster_network is defined and bootstrap_cluster_network != omit else '' }}"
+
+  pre_tasks:
+    - name: Check if cluster already exists
+      stat:
+        path: /etc/ceph/ceph.conf
+      register: ceph_conf_check
+
+    - name: Fail if cluster already exists
+      fail:
+        msg: |
+          Cluster already exists! Found /etc/ceph/ceph.conf
+          To remove existing cluster, run:
+          ansible-playbook -i {{ inventory_file }} 00.purge-everything.yml -e force_purge=true
+      when: ceph_conf_check.stat.exists
+
+    - name: Ensure cephadm is installed
+      package:
+        name: cephadm
+        state: present
+
+    - name: Create /var/lib/cephadm directory (Ubuntu 24.04 fix)
+      file:
+        path: /var/lib/cephadm
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+  tasks:
+    - name: Display bootstrap configuration
+      debug:
+        msg: |
+          ========================================
+          Bootstrap Configuration:
+          Monitor IP: {{ mon_ip }}
+          Public Network: {{ bootstrap_public_network }}
+          Cluster Network: {{ bootstrap_cluster_network | default('Same as public') }}
+          Dashboard User: {{ dashboard_user }}
+          Allow FQDN: {{ allow_fqdn_hostname }}
+          ========================================
+
+    - name: Run cephadm bootstrap
+      shell: |
+        cephadm bootstrap \
+        {{ bootstrap_opts | select | join(' ') }}
+      register: bootstrap_result
+      no_log: false  # Set to true in production to hide passwords
+
+    - name: Extract FSID from output
+      set_fact:
+        cluster_fsid: "{{ bootstrap_result.stdout | regex_search('Cluster fsid: ([a-f0-9-]+)', '\\1') | first }}"
+      when: bootstrap_result.rc == 0
+
+    - name: Extract dashboard URL
+      set_fact:
+        dashboard_url: "{{ bootstrap_result.stdout | regex_search('URL: (https://[^\\s]+)', '\\1') | first }}"
+      when: bootstrap_result.rc == 0
+
+    - name: Save cluster information
+      copy:
+        content: |
+          # Ceph Cluster Information
+          # Generated: {{ now() }}
+
+          CLUSTER_FSID={{ cluster_fsid }}
+          DASHBOARD_URL={{ dashboard_url }}
+          DASHBOARD_USER={{ dashboard_user }}
+          DASHBOARD_PASSWORD={{ dashboard_password }}
+          MONITOR_IP={{ mon_ip }}
+          PUBLIC_NETWORK={{ bootstrap_public_network }}
+          CLUSTER_NETWORK={{ bootstrap_cluster_network | default(bootstrap_public_network) }}
+        dest: /root/cluster-info.env
+        mode: '0600'
+      when: bootstrap_result.rc == 0
+
+    - name: Ensure ansible facts directory exists
+      file:
+        path: /etc/ansible/facts.d
+        state: directory
+        mode: '0755'
+      when: bootstrap_result.rc == 0
+
+    - name: Create ansible facts file
+      copy:
+        content: |
+          [ceph]
+          fsid={{ cluster_fsid }}
+          dashboard_url={{ dashboard_url }}
+          bootstrap_host={{ inventory_hostname }}
+          bootstrap_date={{ now() }}
+        dest: /etc/ansible/facts.d/ceph.fact
+        mode: '0644'
+      when: bootstrap_result.rc == 0
+
+    - name: Display success message
+      debug:
+        msg: |
+          ========================================
+          BOOTSTRAP SUCCESSFUL!
+          ========================================
+
+          Cluster FSID: {{ cluster_fsid }}
+          Dashboard URL: {{ dashboard_url }}
+          Dashboard User: {{ dashboard_user }}
+          Dashboard Password: {{ dashboard_password }}
+
+          Configuration saved to: /root/cluster-info.env
+
+          Next Steps:
+          1. Run post-bootstrap setup:
+             ansible-playbook -i hosts-scalable.yaml 01.post-bootstrap-setup.yml -e fsid={{ cluster_fsid }}
+
+          2. Configure services:
+             ansible-playbook -i hosts-scalable.yaml 02.configure-cephfs.yml
+             ansible-playbook -i hosts-scalable.yaml 03.configure-rgw.yml
+             ansible-playbook -i hosts-scalable.yaml 04.configure-rbd.yml
+          ========================================
+      when: bootstrap_result.rc == 0
+
+- name: Save FSID to local file
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Save FSID locally
+      copy:
+        content: "{{ hostvars[groups['admin'][0]]['cluster_fsid'] }}"
+        dest: ./current-cluster-fsid.txt
+      when: hostvars[groups['admin'][0]]['cluster_fsid'] is defined
+
+    - name: Display FSID
+      debug:
+        msg: "FSID saved to ./current-cluster-fsid.txt: {{ hostvars[groups['admin'][0]]['cluster_fsid'] }}"
+      when: hostvars[groups['admin'][0]]['cluster_fsid'] is defined

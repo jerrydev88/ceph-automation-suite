@@ -1,0 +1,30 @@
+---
+- name: Add GPG Keys and Configure APT Repositories
+  hosts: all
+  become: yes
+  tasks:
+    - name: Download and save the Ceph GPG key
+      ansible.builtin.get_url:
+        url: https://download.ceph.com/keys/release.asc
+        dest: /usr/share/keyrings/ceph-release.gpg
+        mode: '0644'
+
+    - name: Download and save the Docker GPG key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /usr/share/keyrings/docker-archive-keyring.gpg
+        mode: '0644'
+
+    - name: Add the Ceph repository
+      ansible.builtin.apt_repository:
+        repo: deb [signed-by=/usr/share/keyrings/ceph-release.gpg] https://download.ceph.com/debian-quincy/ jammy main
+        filename: ceph
+        state: present
+        update_cache: yes
+
+    - name: Add the Docker repository
+      ansible.builtin.apt_repository:
+        repo: deb [signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu jammy stable
+        filename: docker
+        state: present
+        update_cache: yes

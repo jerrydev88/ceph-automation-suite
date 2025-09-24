@@ -1,0 +1,13 @@
+---
+- hosts: localhost
+  become: false
+  gather_facts: yes
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Include object creation tasks for each RGW instance
+      include_tasks: ../02-services/tasks/rgw_object_creation.yml
+      loop: "{{ ceph.rgw }}"
+      loop_control:
+        loop_var: rgw_instance
+      when: ceph.rgw is defined and ceph.rgw | length > 0

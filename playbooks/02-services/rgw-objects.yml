@@ -1,0 +1,28 @@
+---
+# Create RGW Users and Buckets
+# Creates RGW users and buckets as defined in ceph-vars.yml
+
+- name: Create or Update RGW Objects in Ceph
+  hosts: mons[0]
+  become: yes
+  vars_files:
+    - ../../ceph-vars.yml
+
+  tasks:
+    - name: Ensure radosgw-admin is present
+      ansible.builtin.command:
+        cmd: "which radosgw-admin"
+      register: radosgw_admin
+      failed_when: radosgw_admin.rc != 0
+
+    - name: Iterate over each RGW instance for user creation
+      ansible.builtin.include_tasks: tasks/rgw_user_creation.yml
+      loop: "{{ ceph.rgw }}"
+      loop_control:
+        loop_var: rgw_instance
+
+    - name: Iterate over each RGW instance for bucket creation
+      ansible.builtin.include_tasks: tasks/rgw_bucket_creation.yml
+      loop: "{{ ceph.rgw }}"
+      loop_control:
+        loop_var: rgw_instance

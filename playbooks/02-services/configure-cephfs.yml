@@ -1,0 +1,15 @@
+---
+- hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: CephFS 생성
+      command: ceph fs volume create {{ item.name }}
+      loop: "{{ ceph.cephfs }}"
+      when: item.name is defined
+
+    - name: MDS 서비스 배치
+      command: ceph orch apply mds {{ item.name }} --placement="{{ item.mds.count }}"
+      loop: "{{ ceph.cephfs }}"
+      when: item.name is defined and item.mds.count is defined

@@ -1,0 +1,63 @@
+---
+# 현재 실행 중인 클러스터의 FSID 저장
+# Bootstrap을 수동으로 실행한 경우 사용
+#
+# 사용법:
+# ansible-playbook -i hosts-scalable.yaml save-current-fsid.yml
+
+- name: Save Current Cluster FSID
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Get current cluster FSID
+      command: ceph fsid
+      register: cluster_fsid_output
+      changed_when: false
+
+    - name: Display FSID
+      debug:
+        msg: "Current cluster FSID: {{ cluster_fsid_output.stdout }}"
+
+    - name: Save FSID to admin host
+      copy:
+        content: "{{ cluster_fsid_output.stdout }}"
+        dest: /root/current-fsid.txt
+        mode: '0644'
+
+    - name: Save cluster info
+      copy:
+        content: |
+          # Ceph Cluster Information
+          # Generated: {{ ansible_date_time.iso8601 | default('N/A') }}
+
+          CLUSTER_FSID={{ cluster_fsid_output.stdout }}
+          DASHBOARD_URL=https://{{ inventory_hostname }}:8443/
+          MONITOR_IP={{ ansible_host | default('10.10.2.91') }}
+        dest: /root/cluster-info.env
+        mode: '0600'
+
+- name: Save FSID locally
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Save FSID to local file
+      copy:
+        content: "{{ hostvars[groups['admin'][0]]['cluster_fsid_output']['stdout'] }}"
+        dest: ./current-cluster-fsid.txt
+        mode: '0644'
+
+    - name: Display saved information
+      debug:
+        msg: |
+          ========================================
+          FSID saved successfully!
+
+          FSID: {{ hostvars[groups['admin'][0]]['cluster_fsid_output']['stdout'] }}
+          Local file: ./current-cluster-fsid.txt
+          Remote file: /root/current-fsid.txt (on {{ groups['admin'][0] }})
+
+          You can now use this FSID with other playbooks:
+          ansible-playbook -i hosts-scalable.yaml 01.post-bootstrap-setup.yml \
+            -e fsid={{ hostvars[groups['admin'][0]]['cluster_fsid_output']['stdout'] }}
+          ========================================

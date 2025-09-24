@@ -1,0 +1,49 @@
+---
+# RGW Bucket Management
+# Creates S3 buckets for RGW users
+#
+# Usage:
+# ansible-playbook -i hosts-scalable.yml playbooks/02-services/rgw-buckets.yml
+
+- name: Create RGW Buckets
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../ceph-vars.yml
+
+  tasks:
+    - name: Create S3 bucket for each user
+      shell: |
+        radosgw-admin bucket create \
+          --bucket={{ item.1 }} \
+          --owner={{ item.0.user_id }}
+      loop: "{{ rgw_instance.users | subelements('buckets', skip_missing=True) }}"
+      ignore_errors: true
+      register: bucket_creation
+
+    - name: Save bucket creation results
+      delegate_to: localhost
+      copy:
+        content: |
+          RGW Bucket Creation Results
+          ===========================
+          {% for result in bucket_creation.results %}
+          {% if result.rc is defined %}
+          Bucket: {{ result.item.1 }}
+          Owner: {{ result.item.0.user_id }}
+          Status: {% if result.rc == 0 %}Created successfully{% else %}Failed - {{ result.stderr | default('Unknown error') }}{% endif %}
+          ---
+          {% endif %}
+          {% endfor %}
+        dest: "{{ playbook_dir }}/../../ceph-rgw-buckets-creation-results.txt"
+        mode: '0644'
+
+    - name: Display bucket creation summary
+      debug:
+        msg: |
+          ========================================
+          RGW Bucket Creation Summary:
+          Total buckets processed: {{ bucket_creation.results | length }}
+          Results saved to: ceph-rgw-buckets-creation-results.txt
+          ========================================

@@ -1,0 +1,278 @@
+---
+# Post-Bootstrap Cluster Setup Playbook
+# Bootstrap 완료 후 클러스터 구성을 자동화
+#
+# 사용법:
+# ansible-playbook -i hosts-scalable.yaml 01.post-bootstrap-setup.yml \
+#   -e fsid=1786e1e6-981e-11f0-959a-000c2948cf64
+
+- name: Post-Bootstrap Initial Configuration
+  hosts: admin[0]
+  become: true
+  gather_facts: true
+  vars:
+    # Bootstrap에서 생성된 FSID (필수)
+    fsid: "{{ fsid }}"
+
+    # 호스트 정보 (hosts-scalable.yaml에서 가져옴)
+    cluster_hosts:
+      - name: ceph2
+        ip: 10.10.2.92
+        labels: ["_admin"]
+      - name: ceph3
+        ip: 10.10.2.93
+        labels: ["_admin"]
+
+    # OSD 배포 전략
+    osd_deployment_strategy: "all-available"  # all-available, manual, or service-spec
+
+  tasks:
+    - name: Validate FSID is provided
+      fail:
+        msg: "FSID is required. Run with -e fsid=<your-fsid>"
+      when: fsid is undefined or fsid == ""
+
+    - name: Display cluster information
+      debug:
+        msg: |
+          ========================================
+          Starting Post-Bootstrap Setup
+          FSID: {{ fsid }}
+          Admin Host: {{ inventory_hostname }}
+          ========================================
+
+    - name: Check cluster health before proceeding
+      command: ceph -s
+      register: cluster_status
+      changed_when: false
+
+    - name: Display current cluster status
+      debug:
+        var: cluster_status.stdout_lines
+
+    - name: Get current host list
+      command: ceph orch host ls --format json
+      register: current_hosts_json
+      changed_when: false
+
+    - name: Parse current hosts
+      set_fact:
+        current_hosts: "{{ current_hosts_json.stdout | from_json | map(attribute='hostname') | list }}"
+
+- name: Add Additional Hosts to Cluster
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  vars:
+    cluster_hosts:
+      - name: ceph2
+        ip: 10.10.2.92
+        labels: ["_admin"]
+      - name: ceph3
+        ip: 10.10.2.93
+        labels: ["_admin"]
+
+  tasks:
+    - name: Add hosts to Ceph cluster
+      command: ceph orch host add {{ item.name }} {{ item.ip }}
+      loop: "{{ cluster_hosts }}"
+      when: item.name not in current_hosts
+      register: add_host_result
+      changed_when: add_host_result.rc == 0
+      failed_when:
+        - add_host_result.rc != 0
+        - "'already exists' not in add_host_result.stderr"
+
+    - name: Apply labels to hosts
+      command: ceph orch host label add {{ item.0.name }} {{ item.1 }}
+      loop: "{{ cluster_hosts | subelements('labels') }}"
+      register: label_result
+      changed_when: "'Added' in label_result.stdout"
+      failed_when:
+        - label_result.rc != 0
+        - "'already has label' not in label_result.stderr"
+
+    - name: Wait for hosts to be ready
+      command: ceph orch host ls --format json
+      register: host_check
+      until: (host_check.stdout | from_json | length) >= (cluster_hosts | length + 1)
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Display final host list
+      command: ceph orch host ls
+      register: final_hosts
+      changed_when: false
+
+    - name: Show hosts
+      debug:
+        var: final_hosts.stdout_lines
+
+- name: Deploy SSH Keys to All Hosts
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Get Ceph public SSH key
+      command: ceph cephadm get-pub-key
+      register: ceph_ssh_key
+      changed_when: false
+
+    - name: Save SSH key to file
+      copy:
+        content: "{{ ceph_ssh_key.stdout }}"
+        dest: /tmp/ceph.pub
+        mode: '0644'
+
+    - name: Distribute SSH key to all hosts
+      authorized_key:
+        user: root
+        key: "{{ ceph_ssh_key.stdout }}"
+        state: present
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['all'] }}"
+
+- name: Configure OSD Deployment
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  vars:
+    osd_deployment_strategy: "all-available"
+
+  tasks:
+    - name: Check available devices
+      command: ceph orch device ls --format json
+      register: available_devices
+      changed_when: false
+
+    - name: Display available devices
+      debug:
+        msg: "Available devices found: {{ available_devices.stdout | from_json | length }}"
+
+    - name: Deploy OSDs on all available devices
+      command: ceph orch apply osd --all-available-devices
+      when: osd_deployment_strategy == "all-available"
+      register: osd_deployment
+      changed_when: osd_deployment.rc == 0
+
+    - name: Create OSD service spec
+      when: osd_deployment_strategy == "service-spec"
+      copy:
+        content: |
+          service_type: osd
+          service_id: default_osd_deployment
+          placement:
+            host_pattern: '*'
+          data_devices:
+            all: true
+        dest: /tmp/osd_spec.yaml
+
+    - name: Apply OSD service spec
+      command: ceph orch apply -i /tmp/osd_spec.yaml
+      when: osd_deployment_strategy == "service-spec"
+
+    - name: Wait for OSDs to be deployed
+      shell: ceph osd stat --format json | jq '.num_up_osds'
+      register: osd_count
+      until: (osd_count.stdout | int) >= 3
+      retries: 60
+      delay: 10
+      changed_when: false
+      failed_when: false  # Don't fail if we don't get 3 OSDs
+
+    - name: Display OSD tree
+      command: ceph osd tree
+      register: osd_tree
+      changed_when: false
+
+    - name: Show OSD deployment status
+      debug:
+        var: osd_tree.stdout_lines
+
+- name: Configure Monitor Placement
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Set monitor count to 3
+      command: ceph orch apply mon --placement="3"
+      register: mon_placement
+      changed_when: mon_placement.rc == 0
+
+    - name: Verify monitor deployment
+      command: ceph mon stat
+      register: mon_stat
+      changed_when: false
+
+    - name: Display monitor status
+      debug:
+        var: mon_stat.stdout
+
+- name: Configure Manager Placement
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Set manager count to 2
+      command: ceph orch apply mgr --placement="2"
+      register: mgr_placement
+      changed_when: mgr_placement.rc == 0
+
+    - name: Verify manager deployment
+      command: ceph mgr stat
+      register: mgr_stat
+      changed_when: false
+
+    - name: Display manager status
+      debug:
+        var: mgr_stat.stdout
+
+- name: Final Cluster Validation
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Get cluster health
+      command: ceph health detail
+      register: health_detail
+      changed_when: false
+
+    - name: Get cluster status
+      command: ceph -s
+      register: cluster_status_final
+      changed_when: false
+
+    - name: Get orchestrator status
+      command: ceph orch ls
+      register: orch_services
+      changed_when: false
+
+    - name: Display cluster summary
+      debug:
+        msg: |
+          ========================================
+          POST-BOOTSTRAP SETUP COMPLETE!
+          ========================================
+
+          Cluster Health:
+          {{ health_detail.stdout }}
+
+          Cluster Status:
+          {{ cluster_status_final.stdout }}
+
+          Orchestrator Services:
+          {{ orch_services.stdout }}
+
+          Dashboard Access:
+          URL: https://{{ inventory_hostname }}:8443/
+
+          Next Steps:
+          1. Configure CephFS: ansible-playbook -i hosts-scalable.yaml 02.configure-cephfs.yml
+          2. Configure RGW: ansible-playbook -i hosts-scalable.yaml 03.configure-rgw.yml
+          3. Configure RBD: ansible-playbook -i hosts-scalable.yaml 04.configure-rbd.yml
+          ========================================

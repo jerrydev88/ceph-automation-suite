@@ -1,0 +1,95 @@
+---
+# Time Synchronization for Ceph Cluster
+# Fixes MON_CLOCK_SKEW warnings by synchronizing time across all nodes
+#
+# Usage:
+# ansible-playbook -i hosts-scalable.yml playbooks/03-operations/sync-time.yml
+
+- name: Synchronize Time on All Ceph Nodes
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install time synchronization packages
+      package:
+        name:
+          - chrony
+          - ntpdate
+        state: present
+
+    - name: Stop systemd-timesyncd if exists
+      systemd:
+        name: systemd-timesyncd
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Stop chrony if running
+      systemd:
+        name: chrony
+        state: stopped
+      failed_when: false
+
+    - name: Force sync time with NTP
+      shell: |
+        # Try multiple NTP servers
+        for server in time.google.com pool.ntp.org time.cloudflare.com; do
+          if ntpdate -b $server 2>/dev/null; then
+            echo "Synced with $server"
+            break
+          fi
+        done || \
+        # Fallback to timedatectl
+        timedatectl set-ntp false && \
+        timedatectl set-ntp true
+      register: time_sync
+
+    - name: Start chrony service (Ubuntu 24.04 compatible)
+      systemd:
+        name: chrony
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Wait for chrony to stabilize
+      pause:
+        seconds: 5
+
+    - name: Verify time synchronization
+      command: timedatectl status
+      register: time_status
+      changed_when: false
+
+    - name: Display time status
+      debug:
+        var: time_status.stdout_lines
+
+- name: Verify Time Synchronization
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for cluster to stabilize
+      pause:
+        seconds: 30
+
+    - name: Check cluster health
+      command: ceph health detail
+      register: health_check
+      changed_when: false
+
+    - name: Display cluster health
+      debug:
+        msg: |
+          ========================================
+          Time Synchronization Complete
+          ========================================
+
+          Cluster Health:
+          {{ health_check.stdout }}
+
+          Note: If MON_CLOCK_SKEW persists, wait a few minutes
+          for monitors to resync their clocks.
+          ========================================

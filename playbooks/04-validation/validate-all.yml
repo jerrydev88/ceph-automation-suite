@@ -1,0 +1,106 @@
+---
+- name: Complete Ceph Cluster Validation
+  import_playbook: validate-cluster-health.yml
+
+- name: Validate OSD Configuration
+  import_playbook: validate-osd-configuration.yml
+
+- name: Validate RGW Service
+  import_playbook: validate-rgw.yml
+  when: ceph.rgw is defined
+
+- name: Validate RBD Configuration
+  import_playbook: validate-rbd.yml
+  when: ceph.rbd is defined
+
+- name: Validate CephFS Configuration
+  import_playbook: validate-cephfs.yml
+  when: ceph.cephfs is defined
+
+- name: Validate RGW Buckets
+  import_playbook: validate-rgw-buckets.yml
+  when: ceph.rgw is defined
+
+- name: Validate RBD Snapshots
+  import_playbook: validate-rbd-snapshots.yml
+  when: ceph.rbd is defined
+
+- name: Validate CSI Users
+  import_playbook: validate-csi-users.yml
+  when: ceph.csi is defined
+
+- name: Final Validation Summary
+  hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Get final cluster status
+      command: ceph status
+      register: final_status
+      changed_when: false
+
+    - name: Get cluster usage
+      command: ceph df
+      register: cluster_usage
+      changed_when: false
+
+    - name: Gather facts for timestamp
+      setup:
+        gather_subset:
+          - date_time
+
+    - name: Generate validation report
+      copy:
+        content: |
+          ===============================================
+          Ceph Cluster Validation Report
+          Generated: {{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -Iseconds')) }}
+          ===============================================
+
+          CLUSTER STATUS:
+          {{ final_status.stdout }}
+
+          STORAGE USAGE:
+          {{ cluster_usage.stdout }}
+
+          VALIDATED SERVICES:
+          {% if ceph.rgw is defined %}
+          - RGW: {{ ceph.rgw | length }} instances configured
+          {% endif %}
+          {% if ceph.rbd is defined %}
+          - RBD: {{ ceph.rbd | length }} pools configured
+          {% endif %}
+          {% if ceph.cephfs is defined %}
+          - CephFS: {{ ceph.cephfs | length }} filesystems configured
+          {% endif %}
+          {% if ceph.csi is defined %}
+          - CSI: {{ ceph.csi | length }} users configured
+          {% endif %}
+
+          ===============================================
+          Validation Complete
+          ===============================================
+        dest: /tmp/ceph-validation-report.txt
+      delegate_to: localhost
+      become: false
+
+    - name: Display validation summary
+      debug:
+        msg: |
+          ✅ Cluster Health Check: PASSED
+          ✅ OSD Configuration: VALIDATED
+          {% if ceph.rgw is defined %}
+          ✅ RGW Services: RUNNING
+          {% endif %}
+          {% if ceph.rbd is defined %}
+          ✅ RBD Pools: CONFIGURED
+          {% endif %}
+          {% if ceph.cephfs is defined %}
+          ✅ CephFS: ACTIVE
+          {% endif %}
+          {% if ceph.csi is defined %}
+          ✅ CSI Users: CONFIGURED
+          {% endif %}
+
+          📄 Full report saved to: /tmp/ceph-validation-report.txt

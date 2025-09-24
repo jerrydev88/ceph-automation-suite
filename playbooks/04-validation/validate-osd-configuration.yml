@@ -1,0 +1,54 @@
+---
+- name: Validate OSD Configuration
+  hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Get OSD tree
+      command: ceph osd tree --format json
+      register: osd_tree
+      changed_when: false
+
+    - name: Parse OSD tree
+      set_fact:
+        osd_tree_data: "{{ osd_tree.stdout | from_json }}"
+
+    - name: Validate OSD count
+      assert:
+        that:
+          - osd_tree_data.stray | length == 0
+        fail_msg: "Found stray OSDs in the tree"
+        success_msg: "No stray OSDs found"
+
+    - name: Check each OSD host placement
+      command: ceph osd find {{ item }}
+      register: osd_placement
+      loop: "{{ range(0, osd_tree_data.nodes | selectattr('type', 'equalto', 'osd') | list | length) | list }}"
+      changed_when: false
+      ignore_errors: true
+
+    - name: Validate device classes from vars
+      command: ceph osd crush class ls
+      register: device_classes
+      changed_when: false
+
+    - name: Check if configured device classes exist
+      assert:
+        that:
+          - "'{{ item.device_class }}' in device_classes.stdout"
+        fail_msg: "Device class {{ item.device_class }} not found"
+        success_msg: "Device class {{ item.device_class }} exists"
+      loop: "{{ ceph.osd.specs }}"
+      when:
+        - ceph.osd.specs is defined
+        - item.device_class is defined
+
+    - name: Get OSD utilization
+      command: ceph osd df tree
+      register: osd_utilization
+      changed_when: false
+
+    - name: Display OSD utilization
+      debug:
+        msg: "{{ osd_utilization.stdout_lines }}"

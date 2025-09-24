@@ -1,0 +1,83 @@
+all:
+  vars:
+    ansible_ssh_user: mocomsys
+    ansible_ssh_pass: mocomsys
+    # Ubuntu 24.04 기본 저장소의 Squid 사용 (권장)
+    ceph_origin: distro  # Ceph Squid 19.2.0 사용
+    ceph_mirror: https://download.ceph.com
+
+    # ===== 확장 가능한 Ubuntu 버전 매핑 전략 =====
+
+    # 방법 1: 딕셔너리 매핑 (가장 확장성 좋음)
+    ubuntu_to_ceph_repo_map:
+      # Ubuntu 버전 -> Ceph 저장소 매핑
+      noble: jammy      # 24.04 -> 22.04 저장소
+      mantic: jammy     # 23.10 -> 22.04 저장소
+      lunar: jammy      # 23.04 -> 22.04 저장소
+      jammy: jammy      # 22.04 -> 22.04 저장소
+      focal: focal      # 20.04 -> 20.04 저장소
+      # 향후 추가 가능
+      # oracular: jammy  # 24.10 -> 22.04 저장소
+      # plucky: jammy    # 25.04 -> 22.04 저장소
+
+    # 실제 사용할 저장소 결정
+    ceph_stable_release_deb: "{{ ubuntu_to_ceph_repo_map[ansible_distribution_release] | default(ansible_distribution_release) }}"
+
+    # ===== 대안 2: 버전 번호 기반 매핑 =====
+    # Ubuntu 버전이 22.10 이상이면 jammy 사용, 20.10-22.04는 자체 저장소
+    # ceph_stable_release_deb: >-
+    #   {%- if ansible_distribution_version is version('22.10', '>=') -%}
+    #     jammy
+    #   {%- elif ansible_distribution_version is version('20.04', '>=') and ansible_distribution_version is version('22.04', '<=') -%}
+    #     {{ ansible_distribution_release }}
+    #   {%- else -%}
+    #     focal
+    #   {%- endif -%}
+
+    # ===== 대안 3: Ceph 지원 저장소 목록 기반 =====
+    # ceph_supported_distros:
+    #   - focal
+    #   - jammy
+    #
+    # ceph_stable_release_deb: >-
+    #   {%- if ansible_distribution_release in ceph_supported_distros -%}
+    #     {{ ansible_distribution_release }}
+    #   {%- else -%}
+    #     jammy
+    #   {%- endif -%}
+
+    # ===== 대안 4: 폴백 전략 =====
+    # Ceph 저장소 우선순위 정의
+    # ceph_repo_fallback_chain:
+    #   noble: [noble, jammy, focal]    # Noble -> Jammy -> Focal 순서로 시도
+    #   mantic: [mantic, jammy, focal]
+    #   jammy: [jammy, focal]
+    #   focal: [focal]
+
+  children:
+    mons:
+      hosts:
+        mon1:
+          ansible_host: 10.10.2.91
+        mon2:
+          ansible_host: 10.10.2.92
+        mon3:
+          ansible_host: 10.10.2.93
+    osds:
+      children:
+        mons: {}
+    mgrs:
+      children:
+        mons: {}
+    monitoring:
+      children:
+        mons: {}
+    clients:
+      children:
+        mons: {}
+    mdss:
+      children:
+        mons: {}
+    admin:
+      hosts:
+        mon1: {}

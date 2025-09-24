@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  ceph-automation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      cache_from:
+        - python:3.11-slim
+        - ghcr.io/astral-sh/uv:latest
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: ceph-automation-suite:optimized
+    container_name: ceph-automation
+    hostname: ceph-automation
+
+    # 리소스 제한 (선택사항)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # 네트워크 설정
+    network_mode: bridge
+
+    # 볼륨 마운트 (ansible 사용자용 경로 변경)
+    volumes:
+      # 인벤토리 파일 마운트
+      - ./inventory:/opt/ceph-automation/inventory:rw
+
+      # SSH 키 마운트 (ansible 사용자 홈)
+      - ~/.ssh:/home/ansible/.ssh:ro
+
+      # 로그 저장
+      - ./logs:/var/log/ansible:rw
+
+      # Ansible 팩트 캐시 (영구 저장)
+      - ansible-facts:/tmp/ansible-facts
+
+      # 변수 파일 마운트 (조건부)
+      - type: bind
+        source: ./ceph-vars.yml
+        target: /opt/ceph-automation/ceph-vars.yml
+        read_only: true
+        bind:
+          create_host_path: false
+
+    # 환경 변수 (최적화)
+    environment:
+      - ANSIBLE_HOST_KEY_CHECKING=False
+      - ANSIBLE_GATHERING=smart
+      - ANSIBLE_FACT_CACHING=jsonfile
+      - ANSIBLE_FACT_CACHING_CONNECTION=/tmp/ansible-facts
+      - ANSIBLE_FACT_CACHING_TIMEOUT=86400
+      - ANSIBLE_STDOUT_CALLBACK=yaml
+      - ANSIBLE_CALLBACKS_ENABLED=timer,profile_tasks
+      - ANSIBLE_PIPELINING=True
+      - ANSIBLE_SSH_CONTROL_PATH=/tmp/%%h-%%p-%%r
+      - ANSIBLE_SSH_ARGS=-C -o ControlMaster=auto -o ControlPersist=60s
+      # Python 최적화
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      # UV 캐시
+      - UV_CACHE_DIR=/tmp/uv-cache
+
+    # 컨테이너 유지
+    stdin_open: true
+    tty: true
+
+    # 작업 디렉토리
+    working_dir: /opt/ceph-automation
+
+    # 보안 옵션
+    security_opt:
+      - no-new-privileges:true
+
+    # 읽기 전용 루트 파일시스템 (보안 강화)
+    # read_only: true  # 필요시 활성화
+
+    # 임시 파일시스템
+    tmpfs:
+      - /tmp:size=100M
+      - /run:size=10M
+
+volumes:
+  ansible-facts:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/.ansible-cache
+
+# 사용자 정의 네트워크
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: ceph-net

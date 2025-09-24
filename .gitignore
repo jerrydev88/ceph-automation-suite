@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Ansible
+*.retry
+.ansible-cache/
+/tmp/
+/logs/*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+.dockerignore
+
+# Secrets
+secret.yml
+*.key
+*.pem
+*.crt
+/inventory/hosts-scalable.yml
+ceph-vars.yml
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+.temp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# UV/Python
+.uv/
+uv.lock
+
+# Container runtime
+.container-cache/
+
+# Local development
+activate.sh
+.env
+.envrc

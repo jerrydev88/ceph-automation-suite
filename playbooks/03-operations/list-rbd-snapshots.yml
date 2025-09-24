@@ -1,0 +1,12 @@
+---
+- hosts: mons
+  become: true
+  tasks:
+    - name: List all snapshots for a specific RBD image
+      command: rbd snap ls {{ rbd_image }}
+      register: snapshots
+      changed_when: false
+
+    - name: Show snapshots
+      debug:
+        msg: "{{ snapshots.stdout_lines }}"

@@ -1,0 +1,83 @@
+---
+- name: Validate RGW Configuration
+  hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Check RGW services status
+      command: ceph orch ls rgw
+      register: rgw_services
+      changed_when: false
+
+    - name: Check if RGW service exists
+      assert:
+        that:
+          - "'rgw.' + item.service_name in rgw_services.stdout"
+        fail_msg: "RGW service {{ item.service_name }} not found"
+        success_msg: "RGW service {{ item.service_name }} exists"
+      loop: "{{ ceph.rgw }}"
+      when: ceph.rgw is defined
+
+    - name: Check RGW daemon status
+      command: ceph orch ps --service-name rgw.{{ item.service_name }}
+      register: rgw_daemon_status
+      loop: "{{ ceph.rgw }}"
+      when: ceph.rgw is defined
+      changed_when: false
+
+    - name: Validate RGW daemon is running
+      assert:
+        that:
+          - "'running' in item.stdout"
+        fail_msg: "RGW daemon {{ item.item.service_name }} not running"
+        success_msg: "RGW daemon {{ item.item.service_name }} is running"
+      loop: "{{ rgw_daemon_status.results }}"
+      when: rgw_daemon_status.results is defined
+
+    - name: Check RGW realm
+      command: radosgw-admin realm list
+      register: realm_list
+      changed_when: false
+
+    - name: Validate configured realms exist
+      assert:
+        that:
+          - "item.realm in realm_list.stdout"
+        fail_msg: "Realm {{ item.realm }} not found"
+        success_msg: "Realm {{ item.realm }} exists"
+      loop: "{{ ceph.rgw }}"
+      when: ceph.rgw is defined
+
+    - name: Test RGW endpoint accessibility
+      uri:
+        url: "{{ item.gateway.s3_url }}"
+        method: GET
+        status_code: 200
+        validate_certs: no
+      delegate_to: localhost
+      become: false
+      loop: "{{ ceph.rgw }}"
+      when:
+        - ceph.rgw is defined
+        - item.gateway.s3_url is defined
+
+    - name: Validate RGW users exist
+      command: radosgw-admin user info --uid={{ user.user_id }}
+      register: user_check
+      loop: "{{ ceph.rgw | subelements('users', skip_missing=True) }}"
+      loop_control:
+        loop_var: user_item
+      vars:
+        user: "{{ user_item.1 }}"
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check if all configured users exist
+      assert:
+        that:
+          - item.rc == 0
+        fail_msg: "User {{ item.user_item.1.user_id }} not found"
+        success_msg: "User {{ item.user_item.1.user_id }} exists"
+      loop: "{{ user_check.results }}"
+      when: user_check.results is defined

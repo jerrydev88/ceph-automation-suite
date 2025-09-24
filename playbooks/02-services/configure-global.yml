@@ -1,0 +1,13 @@
+---
+# Configure Global Ceph Settings
+# Sets global configuration parameters for the Ceph cluster
+
+- name: Configure Global Ceph Settings
+  hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Set global mon_max_pg_per_osd
+      command: ceph config set global mon_max_pg_per_osd {{ ceph.global.mon_max_pg_per_osd }}
+      when: ceph.global.mon_max_pg_per_osd is defined

@@ -1,0 +1,236 @@
+---
+# Complete Ceph Deployment Playbook
+# 전체 클러스터 배포를 하나의 플레이북으로 실행
+#
+# 사용법:
+# ansible-playbook -i hosts-scalable.yaml complete-deployment.yml
+
+- name: Complete Ceph Cluster Deployment
+  hosts: localhost
+  gather_facts: false
+  vars:
+    dashboard_user: "mocomsys"
+    dashboard_password: "mocomsys1$"
+
+  tasks:
+    - name: Display deployment plan
+      debug:
+        msg: |
+          ========================================
+          Complete Ceph Deployment Plan
+          ========================================
+          1. Ubuntu 24.04 Fix
+          2. Preflight Setup
+          3. Bootstrap Cluster
+          4. Post-Bootstrap Configuration
+          5. Configure Storage Services
+          ========================================
+
+# Step 1: Ubuntu 24.04 Fix
+- name: Fix Ubuntu 24.04 cephadm issue
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Create /var/lib/cephadm directory
+      file:
+        path: /var/lib/cephadm
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Fix any broken cephadm packages
+      shell: |
+        if dpkg -l | grep -E "^[a-z]F.*cephadm"; then
+          dpkg --configure -a || true
+        fi
+      when: ansible_facts['os_family'] == "Debian"
+      register: dpkg_fix
+      changed_when: "'Setting up cephadm' in dpkg_fix.stdout"
+      failed_when: false
+
+# Step 2: Run Preflight
+- name: Run Preflight Playbook
+  import_playbook: ../../cephadm-preflight.yml
+
+# Step 3: Bootstrap
+- name: Bootstrap Ceph Cluster
+  import_playbook: bootstrap.yml
+  vars:
+    dashboard_user: "mocomsys"
+    dashboard_password: "mocomsys1$"
+
+# Step 4: Post-Bootstrap Setup
+- name: Post-Bootstrap Configuration
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read saved FSID
+      slurp:
+        src: /root/cluster-info.env
+      register: cluster_info_file
+
+    - name: Extract FSID
+      set_fact:
+        extracted_fsid: "{{ cluster_info_file.content | b64decode | regex_search('CLUSTER_FSID=([a-f0-9-]+)', '\\1') | first }}"
+
+    - name: Set FSID for next playbook
+      set_fact:
+        cluster_fsid: "{{ extracted_fsid }}"
+
+- name: Run Post-Bootstrap Setup
+  import_playbook: post-bootstrap.yml
+  vars:
+    fsid: "{{ hostvars[groups['admin'][0]]['cluster_fsid'] }}"
+
+# Step 5: Wait for cluster to be healthy
+- name: Wait for Cluster Health
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for HEALTH_OK
+      shell: ceph health | grep -E "HEALTH_OK|HEALTH_WARN"
+      register: health_check
+      until: health_check.rc == 0
+      retries: 60
+      delay: 10
+      changed_when: false
+
+    - name: Display cluster health
+      command: ceph -s
+      register: cluster_status
+      changed_when: false
+
+    - name: Show status
+      debug:
+        var: cluster_status.stdout_lines
+
+# Step 6: Configure Storage Services
+- name: Configure Storage Services
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Display service configuration plan
+      debug:
+        msg: |
+          ========================================
+          Configuring Storage Services:
+          - CephFS (fs-oa)
+          - RGW (rgw-oa)
+          - RBD (rbd-oa)
+          ========================================
+
+- name: Configure CephFS
+  import_playbook: ../02-services/configure-cephfs.yml
+  when: configure_cephfs | default(true)
+
+- name: Configure RGW
+  import_playbook: ../02-services/configure-rgw.yml
+  when: configure_rgw | default(true)
+
+- name: Configure RBD
+  import_playbook: ../02-services/configure-rbd.yml
+  when: configure_rbd | default(true)
+
+# Step 7: Configure RGW Users and Buckets
+- name: Configure RGW Users and Buckets
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Check if RGW user creation playbook exists
+      stat:
+        path: "{{ playbook_dir }}/../02-services/rgw-users.yml"
+      register: rgw_user_playbook
+
+    - name: Check if RGW bucket creation playbook exists
+      stat:
+        path: "{{ playbook_dir }}/../02-services/rgw-buckets.yml"
+      register: rgw_bucket_playbook
+
+- name: Create RGW Users
+  import_playbook: ../02-services/rgw-users.yml
+  when:
+    - configure_rgw | default(true)
+    - hostvars['localhost']['rgw_user_playbook'].stat.exists
+
+- name: Create RGW Buckets
+  import_playbook: ../02-services/rgw-buckets.yml
+  when:
+    - configure_rgw | default(true)
+    - hostvars['localhost']['rgw_bucket_playbook'].stat.exists
+
+# Step 8: Configure Kubernetes CSI
+- name: Configure Kubernetes CSI
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Check if CSI playbook exists
+      stat:
+        path: "{{ playbook_dir }}/../02-services/csi-users.yml"
+      register: csi_playbook
+
+- name: Create CSI Users
+  import_playbook: ../02-services/csi-users.yml
+  when:
+    - configure_csi | default(true)
+    - hostvars['localhost']['csi_playbook'].stat.exists
+
+# Final Summary
+- name: Final Deployment Summary
+  hosts: admin[0]
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Gather final cluster status
+      command: ceph -s
+      register: final_status
+      changed_when: false
+
+    - name: Gather service list
+      command: ceph orch ls
+      register: service_list
+      changed_when: false
+
+    - name: Gather host list
+      command: ceph orch host ls
+      register: host_list
+      changed_when: false
+
+    - name: Gather OSD status
+      command: ceph osd tree
+      register: osd_tree
+      changed_when: false
+
+    - name: Read cluster info
+      slurp:
+        src: /root/cluster-info.env
+      register: cluster_info_final
+
+    - name: Display deployment summary
+      debug:
+        msg: |
+          ========================================
+          DEPLOYMENT COMPLETE!
+          ========================================
+
+          Cluster Information:
+          {{ cluster_info_final.content | b64decode }}
+
+          Current Status:
+          {{ final_status.stdout }}
+
+          Active Services:
+          {{ service_list.stdout }}
+
+          Cluster Hosts:
+          {{ host_list.stdout }}
+
+          OSD Tree:
+          {{ osd_tree.stdout }}
+
+          ========================================
+          Deployment completed successfully!
+          ========================================

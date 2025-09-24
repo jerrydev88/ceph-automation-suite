@@ -1,0 +1,35 @@
+---
+- hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Retrieve list of pools
+      command: ceph osd lspools --format json
+      register: pools
+      changed_when: false
+
+    - name: Parse pool names
+      set_fact:
+        pool_names: "{{ pools.stdout | default('[]') | from_json | map(attribute='poolname') | list }}"
+      when:
+        - pools.stdout is defined
+        - pools.skipped is not defined
+
+    - name: List all RBD images in each pool
+      command: rbd ls -p {{ item }}
+      register: rbd_images
+      loop: "{{ pool_names | default([]) }}"
+      changed_when: false
+      ignore_errors: true
+      when: pool_names is defined
+
+    - name: Display RBD images from each pool
+      debug:
+        msg: "Pool {{ item.item }}: {{ item.stdout_lines }}"
+      loop: "{{ rbd_images.results | default([]) }}"
+      when:
+        - rbd_images.results is defined
+        - item.rc == 0
+        - item.stdout_lines | length > 0
+

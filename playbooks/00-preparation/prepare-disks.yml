@@ -1,0 +1,169 @@
+---
+# 디스크 초기화 플레이북 - OSD 배포를 위한 디스크 정리
+#
+# 사용법:
+# ansible-playbook -i hosts-scalable.yaml zap-disks-for-osd.yml
+
+- name: Zap Disks for OSD Deployment
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    target_disks:
+      - /dev/sdb
+      - /dev/vdb  # 다른 환경용
+      - /dev/xvdb # 클라우드 환경용
+
+  tasks:
+    - name: Warning message
+      pause:
+        prompt: |
+          ⚠️  WARNING: This will DESTROY ALL DATA on {{ target_disks | join(', ') }}
+          Press Enter to continue, Ctrl+C to abort
+
+    - name: Check which disks exist
+      shell: |
+        for disk in {{ target_disks | join(' ') }}; do
+          if [ -b "$disk" ]; then
+            echo "$disk exists"
+            # Check if mounted
+            if mount | grep -q "$disk"; then
+              echo "$disk is MOUNTED - will unmount"
+            fi
+          fi
+        done
+      register: disk_check
+      changed_when: false
+
+    - name: Display disk status
+      debug:
+        var: disk_check.stdout_lines
+
+    - name: Unmount any mounted partitions
+      shell: |
+        for disk in {{ target_disks | join(' ') }}; do
+          if [ -b "$disk" ]; then
+            # Unmount all partitions
+            for part in $(ls ${disk}* 2>/dev/null | grep -E "${disk}[0-9]"); do
+              umount -f $part 2>/dev/null || true
+            done
+          fi
+        done
+      register: unmount_result
+
+    - name: Stop any LVM volumes
+      shell: |
+        # Deactivate any LVM volumes
+        vgchange -an 2>/dev/null || true
+        # Remove any Ceph LVM volumes
+        for vg in $(vgs --noheading -o vg_name 2>/dev/null | grep -i ceph); do
+          vgremove -f "$vg" 2>/dev/null || true
+        done
+      ignore_errors: true
+
+    - name: Zap disks with multiple methods
+      shell: |
+        for disk in {{ target_disks | join(' ') }}; do
+          if [ -b "$disk" ]; then
+            echo "=== Zapping $disk on {{ inventory_hostname }} ==="
+
+            # Method 1: ceph-volume zap (if available)
+            if command -v ceph-volume >/dev/null 2>&1; then
+              echo "Using ceph-volume to zap $disk"
+              ceph-volume lvm zap --destroy $disk || true
+            fi
+
+            # Method 2: wipefs
+            echo "Wiping filesystem signatures from $disk"
+            wipefs -a $disk || true
+
+            # Method 3: dd the first and last 10MB
+            echo "DD wiping beginning and end of $disk"
+            dd if=/dev/zero of=$disk bs=1M count=10 2>/dev/null || true
+            blockdev --getsize64 $disk >/dev/null 2>&1 && \
+              dd if=/dev/zero of=$disk bs=1M count=10 seek=$(($(blockdev --getsize64 $disk)/1048576 - 10)) 2>/dev/null || true
+
+            # Method 4: sgdisk
+            if command -v sgdisk >/dev/null 2>&1; then
+              echo "Using sgdisk to zap $disk"
+              sgdisk --zap-all $disk || true
+            fi
+
+            # Method 5: parted
+            if command -v parted >/dev/null 2>&1; then
+              echo "Using parted to remove partitions from $disk"
+              parted -s $disk mklabel gpt || true
+              parted -s $disk mklabel msdos || true
+              wipefs -a $disk || true
+            fi
+
+            echo "✅ $disk zapped successfully"
+          fi
+        done
+      register: zap_result
+
+    - name: Display zap results
+      debug:
+        var: zap_result.stdout_lines
+
+    - name: Verify disks are clean
+      shell: |
+        for disk in {{ target_disks | join(' ') }}; do
+          if [ -b "$disk" ]; then
+            echo "=== $disk status ==="
+            # Check for any remaining signatures
+            wipefs $disk
+            # Check partition table
+            parted -s $disk print 2>&1 | head -5
+          fi
+        done
+      register: verify_clean
+      changed_when: false
+
+    - name: Display verification
+      debug:
+        var: verify_clean.stdout_lines
+
+- name: Refresh Ceph Device Inventory
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Refresh device list in Ceph
+      command: ceph orch device ls --refresh
+      register: device_refresh
+      changed_when: false
+
+    - name: Wait for refresh
+      pause:
+        seconds: 10
+
+    - name: Check new device availability
+      shell: |
+        echo "=== Available Devices After Zap ==="
+        ceph orch device ls --format json | jq -r '.[] | "\(.hostname): \(.path) - Available: \(.available)"'
+      register: new_device_status
+      changed_when: false
+
+    - name: Display new device status
+      debug:
+        var: new_device_status.stdout_lines
+
+    - name: Summary
+      debug:
+        msg: |
+          ========================================
+          DISK ZAP COMPLETE!
+          ========================================
+
+          Disks have been wiped clean.
+
+          Next steps:
+          1. Deploy OSDs:
+             ansible-playbook -i hosts-scalable.yaml fix-osd-deployment.yml
+
+          Or manually:
+             ssh mon1 "sudo ceph orch apply osd --all-available-devices"
+
+          ========================================

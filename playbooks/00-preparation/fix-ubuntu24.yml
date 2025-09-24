@@ -1,0 +1,31 @@
+---
+# Quick fix for broken cephadm package on mon1 and mon2
+# This fixes the dpkg configuration issue without modifying the main playbook
+
+- name: Fix broken cephadm package on Ubuntu 24.04 hosts
+  hosts: mon1,mon2  # Only target the broken hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Create cephadm directory
+      ansible.builtin.file:
+        path: /var/lib/cephadm
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Reconfigure dpkg to fix broken packages
+      ansible.builtin.command: dpkg --configure -a
+      register: dpkg_result
+      changed_when: dpkg_result.rc == 0
+
+    - name: Verify cephadm is properly installed
+      ansible.builtin.command: dpkg -l cephadm
+      register: cephadm_status
+      changed_when: false
+      failed_when: "'ii  cephadm' not in cephadm_status.stdout"
+
+    - name: Show status
+      ansible.builtin.debug:
+        msg: "cephadm package is now properly configured on {{ inventory_hostname }}"

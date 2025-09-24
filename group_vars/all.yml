@@ -1,0 +1,59 @@
+# group_vars/all.yml
+# 중앙 집중식 변수 관리 (더 나은 확장성)
+
+# SSH 설정
+ansible_ssh_user: mocomsys
+ansible_ssh_pass: mocomsys
+
+# Ceph 기본 설정
+# Ubuntu 24.04는 기본적으로 Squid (19.2.0) 포함
+# 옵션 1: Ubuntu 저장소 사용 (권장)
+ceph_origin: distro  # Ubuntu 기본 저장소의 Squid 사용
+# 옵션 2: Ceph 공식 저장소 사용
+# ceph_release: squid
+# ceph_origin: community
+ceph_mirror: https://download.ceph.com
+
+# Ubuntu 버전별 Ceph 저장소 매핑
+# 새로운 Ubuntu 버전이 출시되면 여기만 업데이트
+ubuntu_ceph_repo_mapping:
+  # Ubuntu 24.10 (Oracular Oriole) - 2024년 10월 예정
+  oracular: jammy
+
+  # Ubuntu 24.04 LTS (Noble Numbat)
+  noble: jammy
+
+  # Ubuntu 23.10 (Mantic Minotaur)
+  mantic: jammy
+
+  # Ubuntu 23.04 (Lunar Lobster)
+  lunar: jammy
+
+  # Ubuntu 22.04 LTS (Jammy Jellyfish) - Ceph 공식 지원
+  jammy: jammy
+
+  # Ubuntu 20.04 LTS (Focal Fossa) - Ceph 공식 지원
+  focal: focal
+
+  # Ubuntu 18.04 LTS (Bionic Beaver) - EOL
+  bionic: focal
+
+# 저장소 결정 로직
+ceph_stable_release_deb: "{{ ubuntu_ceph_repo_mapping[ansible_distribution_release] | default('jammy') }}"
+
+# Ceph 버전별 최소 Ubuntu 버전 요구사항
+ceph_minimum_ubuntu_versions:
+  quincy: "20.04"  # Ceph 17.x
+  reef: "20.04"    # Ceph 18.x
+  squid: "22.04"   # Ceph 19.x (Ubuntu 24.04는 기본 포함)
+
+# 동적 저장소 URL 생성
+ceph_apt_repo_url: "deb {{ ceph_mirror }}/debian-{{ ceph_release }}/ {{ ceph_stable_release_deb }} main"
+
+# 패키지 버전 고정 옵션 (프로덕션 환경용)
+ceph_package_version_lock: false
+ceph_package_version: "*"  # 또는 특정 버전 예: "17.2.6-1"
+
+# 디버깅을 위한 변수
+debug_ubuntu_version: "{{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_distribution_release }})"
+debug_ceph_repo_used: "{{ ceph_stable_release_deb }}"

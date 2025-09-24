@@ -1,0 +1,70 @@
+---
+# Kubernetes CSI User Creation
+# Creates users and credentials for Kubernetes CSI integration
+#
+# Usage:
+# ansible-playbook -i hosts-scalable.yml playbooks/02-services/csi-users.yml
+
+- name: Create Ceph CSI Users for Kubernetes
+  hosts: mons[0]
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../ceph-vars.yml
+
+  tasks:
+    - name: Create CSI users with dynamic capabilities
+      command: >
+        ceph auth get-or-create client.{{ item.ceph_csi_user }}
+        {% if item.caps.mon is defined %}mon '{{ item.caps.mon }}'{% endif %}
+        {% if item.caps.osd is defined %}osd '{{ item.caps.osd }}'{% endif %}
+        {% if item.caps.mgr is defined %}mgr '{{ item.caps.mgr }}'{% endif %}
+        {% if item.caps.mds is defined %}mds '{{ item.caps.mds }}'{% endif %}
+      loop: "{{ ceph.csi }}"
+      register: csi_user_creation
+      when: ceph.csi is defined
+      changed_when: false
+
+    - name: Get user keys
+      command: ceph auth get-key client.{{ item.ceph_csi_user }}
+      loop: "{{ ceph.csi }}"
+      register: user_keys
+      when: ceph.csi is defined
+
+    - name: Ensure CSI user results directory exists
+      delegate_to: localhost
+      become: false
+      file:
+        path: "{{ ceph.csi_user_creation_result_file | dirname }}"
+        state: directory
+        mode: '0755'
+      when:
+        - ceph.csi is defined
+        - ceph.csi_user_creation_result_file is defined
+
+    - name: Save CSI user information
+      delegate_to: localhost
+      become: false
+      copy:
+        content: |
+          {% for idx in range(ceph.csi | length) %}
+          [client.{{ ceph.csi[idx].ceph_csi_user }}]
+          	key = {{ user_keys.results[idx].stdout }}
+          {% endfor %}
+        dest: "{{ ceph.csi_user_creation_result_file }}"
+        mode: '0600'
+      when:
+        - ceph.csi is defined
+        - ceph.csi_user_creation_result_file is defined
+
+    - name: Display CSI user creation summary
+      debug:
+        msg: |
+          ========================================
+          CSI User Creation Complete!
+          Users created: {{ ceph.csi | length if ceph.csi is defined else 0 }}
+          Results saved to: {{ ceph.csi_user_creation_result_file }}
+
+          Note: Use these credentials in your Kubernetes
+          CSI driver configuration
+          ========================================

@@ -1,0 +1,91 @@
+---
+- name: Validate CephFS Configuration
+  hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Get CephFS list
+      command: ceph fs ls --format json
+      register: fs_list
+      changed_when: false
+
+    - name: Parse filesystem list
+      set_fact:
+        filesystems: "{{ fs_list.stdout | from_json }}"
+
+    - name: Validate CephFS from vars exists
+      assert:
+        that:
+          - filesystems | selectattr('name', 'equalto', item.name) | list | length > 0
+        fail_msg: "CephFS {{ item.name }} not found"
+        success_msg: "CephFS {{ item.name }} exists"
+      loop: "{{ ceph.cephfs }}"
+      when: ceph.cephfs is defined
+
+    - name: Check MDS service status for each filesystem
+      command: ceph orch ls mds
+      register: mds_services
+      changed_when: false
+
+    - name: Validate MDS service is running for each filesystem
+      assert:
+        that:
+          - "'mds.' + item.name in mds_services.stdout"
+          - "'1/1' in mds_services.stdout"
+        fail_msg: "MDS service for {{ item.name }} not running"
+        success_msg: "MDS service for {{ item.name }} is running"
+      loop: "{{ ceph.cephfs }}"
+      when: ceph.cephfs is defined
+
+    - name: Check CephFS status
+      command: ceph fs status {{ item.name }}
+      register: fs_status
+      loop: "{{ ceph.cephfs }}"
+      when: ceph.cephfs is defined
+      changed_when: false
+
+    - name: Validate CephFS is active
+      assert:
+        that:
+          - "'active' in item.stdout"
+        fail_msg: "CephFS {{ item.item.name }} is not active"
+        success_msg: "CephFS {{ item.item.name }} is active"
+      loop: "{{ fs_status.results }}"
+      when: fs_status.results is defined
+
+    - name: Check MDS daemon count
+      command: ceph fs get {{ item.name }} --format json
+      register: fs_details
+      loop: "{{ ceph.cephfs }}"
+      when: ceph.cephfs is defined
+      changed_when: false
+
+    - name: Validate MDS count matches configuration
+      assert:
+        that:
+          - (fs_details.results[index].stdout | from_json).mdsmap.max_mds >= item.mds.count
+        fail_msg: "MDS count for {{ item.name }} doesn't match configuration"
+        success_msg: "MDS count for {{ item.name }} matches configuration"
+      loop: "{{ ceph.cephfs }}"
+      loop_control:
+        index_var: index
+      when:
+        - ceph.cephfs is defined
+        - item.mds.count is defined
+
+    - name: Get data pool for CephFS
+      command: ceph fs get {{ item.name }} --format json
+      register: fs_pools
+      loop: "{{ ceph.cephfs }}"
+      when: ceph.cephfs is defined
+      changed_when: false
+
+    - name: Display CephFS pool information
+      debug:
+        msg: |
+          CephFS {{ item.item.name }} pools:
+          - Metadata: {{ (item.stdout | from_json).mdsmap.metadata_pool }}
+          - Data: {{ (item.stdout | from_json).mdsmap.data_pools }}
+      loop: "{{ fs_pools.results }}"
+      when: fs_pools.results is defined

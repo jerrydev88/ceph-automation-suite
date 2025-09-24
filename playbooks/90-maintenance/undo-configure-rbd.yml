@@ -1,0 +1,49 @@
+---
+# Undo RBD Configuration
+# Removes RBD pools and related configurations
+#
+# Usage:
+# ansible-playbook -i hosts-scalable.yml playbooks/90-maintenance/undo-configure-rbd.yml
+
+- name: Undo RBD Configuration
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../ceph-vars.yml
+
+  tasks:
+    - name: Confirm RBD removal
+      pause:
+        prompt: "This will remove RBD pool '{{ rbd_pool.pool_name }}'. Type 'yes' to continue"
+      register: confirm_removal
+
+    - name: Check confirmation
+      fail:
+        msg: "Operation cancelled by user"
+      when: confirm_removal.user_input != "yes"
+
+    - name: List images in RBD pool
+      command: rbd ls {{ rbd_pool.pool_name }}
+      register: rbd_images
+      changed_when: false
+      failed_when: false
+
+    - name: Remove all images from pool
+      command: rbd rm {{ rbd_pool.pool_name }}/{{ item }} --force
+      loop: "{{ rbd_images.stdout_lines }}"
+      when: rbd_images.stdout_lines is defined and rbd_images.stdout_lines | length > 0
+
+    - name: Remove RBD pool
+      command: ceph osd pool rm {{ rbd_pool.pool_name }} {{ rbd_pool.pool_name }} --yes-i-really-really-mean-it
+      register: pool_removal
+
+    - name: Display removal status
+      debug:
+        msg: |
+          ========================================
+          RBD Configuration Removal Complete
+          ========================================
+          Pool removed: {{ rbd_pool.pool_name }}
+          Status: {{ pool_removal.stdout | default('Success') }}
+          ========================================

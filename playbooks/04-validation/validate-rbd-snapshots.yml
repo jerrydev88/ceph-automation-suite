@@ -1,0 +1,83 @@
+---
+- name: Validate RBD Snapshots
+  hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: List all RBD pools
+      command: ceph osd lspools --format json
+      register: pool_list
+      changed_when: false
+
+    - name: Parse pool list
+      set_fact:
+        rbd_pools: "{{ pool_list.stdout | from_json | selectattr('application_metadata', 'defined') | selectattr('application_metadata.rbd', 'defined') | map(attribute='poolname') | list }}"
+
+    - name: List images in RBD pools
+      command: rbd ls -p {{ item }}
+      register: image_list
+      loop: "{{ rbd_pools }}"
+      when: rbd_pools is defined
+      changed_when: false
+      ignore_errors: true
+
+    - name: List snapshots for each image
+      command: rbd snap ls {{ item.0.item }}/{{ item.1 }}
+      register: snap_list
+      with_subelements:
+        - "{{ image_list.results | selectattr('stdout_lines', 'defined') | list }}"
+        - stdout_lines
+      when:
+        - image_list.results is defined
+        - item.1 != ""
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display snapshot information
+      debug:
+        msg: |
+          Pool: {{ item.item.0.item }}
+          Image: {{ item.item.1 }}
+          Snapshots: {{ item.stdout_lines | default(['No snapshots']) }}
+      loop: "{{ snap_list.results }}"
+      when:
+        - snap_list.results is defined
+        - item is not skipped
+
+    - name: Check snapshot protection status
+      command: rbd snap ls {{ item.0.item }}/{{ item.1 }} --format json
+      register: snap_details
+      with_subelements:
+        - "{{ image_list.results | selectattr('stdout_lines', 'defined') | list }}"
+        - stdout_lines
+      when:
+        - image_list.results is defined
+        - item.1 != ""
+      changed_when: false
+      ignore_errors: true
+
+    - name: Parse and validate snapshot details
+      block:
+        - name: Process snapshot information
+          set_fact:
+            all_snapshots: |
+              {% set snapshots = [] %}
+              {% for result in snap_details.results if result is not skipped and result.rc == 0 %}
+                {% if result.stdout %}
+                  {% set _ = snapshots.append({'pool': result.item.0.item, 'image': result.item.1, 'snapshots': result.stdout | from_json}) %}
+                {% endif %}
+              {% endfor %}
+              {{ snapshots }}
+          when: snap_details.results is defined
+
+        - name: Check for protected snapshots
+          debug:
+            msg: |
+              Pool: {{ item.pool }}
+              Image: {{ item.image }}
+              Protected snapshots: {{ item.snapshots | selectattr('protected', 'defined') | selectattr('protected', 'equalto', true) | map(attribute='name') | list }}
+          loop: "{{ all_snapshots }}"
+          when:
+            - all_snapshots is defined
+            - item.snapshots is defined

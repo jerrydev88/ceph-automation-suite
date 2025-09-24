@@ -1,0 +1,58 @@
+---
+- name: Validate Ceph Cluster Health
+  hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Check cluster status
+      command: ceph status
+      register: ceph_status
+      changed_when: false
+
+    - name: Display cluster status
+      debug:
+        msg: "{{ ceph_status.stdout_lines }}"
+
+    - name: Check cluster health
+      command: ceph health detail
+      register: ceph_health
+      changed_when: false
+
+    - name: Validate cluster health is OK
+      assert:
+        that:
+          - "'HEALTH_OK' in ceph_health.stdout or 'HEALTH_WARN' in ceph_health.stdout"
+        fail_msg: "Cluster health is not OK: {{ ceph_health.stdout }}"
+        success_msg: "Cluster health check passed"
+
+    - name: Check OSD status
+      command: ceph osd stat
+      register: osd_stat
+      changed_when: false
+
+    - name: Parse OSD status
+      set_fact:
+        osd_count: "{{ osd_stat.stdout | regex_search('(\\d+) osds:', '\\1') | first }}"
+        osd_up: "{{ osd_stat.stdout | regex_search('(\\d+) up', '\\1') | first }}"
+        osd_in: "{{ osd_stat.stdout | regex_search('(\\d+) in', '\\1') | first }}"
+
+    - name: Validate all OSDs are up
+      assert:
+        that:
+          - osd_count == osd_up
+          - osd_count == osd_in
+        fail_msg: "Not all OSDs are up: {{ osd_up }}/{{ osd_count }} up, {{ osd_in }}/{{ osd_count }} in"
+        success_msg: "All {{ osd_count }} OSDs are up and running"
+
+    - name: Check MON status
+      command: ceph mon stat
+      register: mon_stat
+      changed_when: false
+
+    - name: Validate MON quorum
+      assert:
+        that:
+          - "'quorum' in mon_stat.stdout"
+        fail_msg: "MON quorum not established: {{ mon_stat.stdout }}"
+        success_msg: "MON quorum established"

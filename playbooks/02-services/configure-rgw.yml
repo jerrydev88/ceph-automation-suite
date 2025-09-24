@@ -1,0 +1,41 @@
+---
+- hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Create RGW realm
+      command: radosgw-admin realm create --rgw-realm={{ item.realm }} --default
+      loop: "{{ ceph.rgw }}"
+      when: ceph.rgw is defined and ceph.rgw | length > 0
+      loop_control:
+        label: "{{ item.realm }}"
+      ignore_errors: true
+
+    - name: Create RGW zonegroup
+      command: radosgw-admin zonegroup create --rgw-zonegroup={{ item.zonegroup }} --rgw-realm={{ item.realm }} --master --default
+      loop: "{{ ceph.rgw }}"
+      when: ceph.rgw is defined and ceph.rgw | length > 0
+      loop_control:
+        label: "{{ item.zonegroup }}"
+      ignore_errors: true
+
+    - name: Create RGW zone
+      command: radosgw-admin zone create --rgw-zone={{ item.zone }} --rgw-zonegroup={{ item.zonegroup }} --rgw-realm={{ item.realm }} --master --default
+      loop: "{{ ceph.rgw }}"
+      when: ceph.rgw is defined and ceph.rgw | length > 0
+      loop_control:
+        label: "{{ item.zone }}"
+      ignore_errors: true
+
+    - name: Commit period
+      command: radosgw-admin period update --commit
+      ignore_errors: true
+
+    - name: 각 RGW 서비스 배치
+      command: ceph orch apply rgw {{ item.service_name }} --realm {{ item.realm }} --zonegroup {{ item.zonegroup }} --zone {{ item.zone }} --placement="{{ item.count }}"
+      loop: "{{ ceph.rgw }}"
+      when: ceph.rgw is defined and ceph.rgw | length > 0
+      loop_control:
+        label: "{{ item.service_name }}"
+

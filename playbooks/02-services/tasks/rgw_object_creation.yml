@@ -1,0 +1,35 @@
+---
+- name: Read RGW user keys from local file
+  delegate_to: localhost
+  become: false
+  ansible.builtin.slurp:
+    src: "{{ ceph.rgw_user_creation_result_file }}"
+  register: rgw_user_keys_content
+
+- name: Decode file content and parse CSV
+  set_fact:
+    rgw_user_keys: "{{ (rgw_user_keys_content['content'] | b64decode).split('\n')[1:] | list }}"
+
+- name: Filter out the header and empty lines
+  set_fact:
+    rgw_user_keys: "{{ rgw_user_keys | select('match', '^[^,]+,[^,]+,[^,]+,[^,]+,[^,]+$') | list }}"
+
+- name: Create test objects in S3 buckets
+  delegate_to: localhost
+  become: false
+  amazon.aws.s3_object:
+    bucket: "{{ item.1.name }}"
+    object: "test-object-{{ lookup('pipe', 'date +%s') }}.txt"
+    mode: put
+    content: "This is a test object created for bucket {{ item.1.name }}"
+    endpoint_url: "{{ rgw_instance.gateway.s3_url }}"
+    aws_access_key: "{{ (rgw_user_keys | select('search', item.0.user_id) | first).split(',')[3] }}"
+    aws_secret_key: "{{ (rgw_user_keys | select('search', item.0.user_id) | first).split(',')[4] }}"
+    validate_certs: no
+    region: "default"
+  with_subelements:
+    - "{{ rgw_instance.users }}"
+    - buckets
+  loop_control:
+    label: "{{ item.0.user_id }} - {{ item.1.name }}"
+  ignore_errors: true

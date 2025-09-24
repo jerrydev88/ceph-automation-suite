@@ -1,0 +1,144 @@
+---
+- name: Validate CSI Users Configuration
+  hosts: mons[0]
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: List all authentication entities
+      command: ceph auth list
+      register: auth_list
+      changed_when: false
+
+    - name: Check if CSI users exist
+      assert:
+        that:
+          - "'client.' + item.ceph_csi_user in auth_list.stdout"
+        fail_msg: "CSI user client.{{ item.ceph_csi_user }} not found"
+        success_msg: "CSI user client.{{ item.ceph_csi_user }} exists"
+      loop: "{{ ceph.csi }}"
+      when: ceph.csi is defined
+
+    - name: Get CSI user capabilities
+      command: ceph auth get client.{{ item.ceph_csi_user }}
+      register: user_caps
+      loop: "{{ ceph.csi }}"
+      when: ceph.csi is defined
+      changed_when: false
+
+    - name: Validate CSI user MON capabilities
+      assert:
+        that:
+          - "item.item.caps.mon in item.stdout"
+        fail_msg: "MON capability mismatch for client.{{ item.item.ceph_csi_user }} - expected: {{ item.item.caps.mon }}"
+        success_msg: "MON capability correct for client.{{ item.item.ceph_csi_user }}"
+      loop: "{{ user_caps.results }}"
+      when:
+        - user_caps.results is defined
+        - item.item.caps.mon is defined
+
+    - name: Validate CSI user OSD capabilities
+      assert:
+        that:
+          - "item.item.caps.osd in item.stdout"
+        fail_msg: "OSD capability mismatch for client.{{ item.item.ceph_csi_user }} - expected: {{ item.item.caps.osd }}"
+        success_msg: "OSD capability correct for client.{{ item.item.ceph_csi_user }}"
+      loop: "{{ user_caps.results }}"
+      when:
+        - user_caps.results is defined
+        - item.item.caps.osd is defined
+
+    - name: Validate CSI user MGR capabilities
+      assert:
+        that:
+          - "item.item.caps.mgr in item.stdout"
+        fail_msg: "MGR capability mismatch for client.{{ item.item.ceph_csi_user }} - expected: {{ item.item.caps.mgr }}"
+        success_msg: "MGR capability correct for client.{{ item.item.ceph_csi_user }}"
+      loop: "{{ user_caps.results }}"
+      when:
+        - user_caps.results is defined
+        - item.item.caps.mgr is defined
+
+    - name: Validate CSI user MDS capabilities
+      assert:
+        that:
+          - "item.item.caps.mds in item.stdout"
+        fail_msg: "MDS capability mismatch for client.{{ item.item.ceph_csi_user }} - expected: {{ item.item.caps.mds }}"
+        success_msg: "MDS capability correct for client.{{ item.item.ceph_csi_user }}"
+      loop: "{{ user_caps.results }}"
+      when:
+        - user_caps.results is defined
+        - item.item.caps.mds is defined
+
+    - name: Check if CSI user keys file exists
+      stat:
+        path: "{{ ansible_env.PWD }}/{{ ceph.csi_user_creation_result_file }}"
+      register: csi_keys_file
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_env:
+          PWD: "/Users/jerrydev/dev/workspaces/cephadm-ansible"
+
+    - name: Validate CSI keys file exists
+      assert:
+        that:
+          - csi_keys_file.stat.exists
+        fail_msg: "CSI keys file {{ ceph.csi_user_creation_result_file }} not found"
+        success_msg: "CSI keys file exists"
+      when: ceph.csi_user_creation_result_file is defined
+
+    - name: Read CSI keys file content
+      slurp:
+        src: "{{ ansible_env.PWD }}/{{ ceph.csi_user_creation_result_file }}"
+      register: csi_keys_content
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_env:
+          PWD: "/Users/jerrydev/dev/workspaces/cephadm-ansible"
+      when:
+        - csi_keys_file.stat.exists
+        - ceph.csi_user_creation_result_file is defined
+
+    - name: Validate CSI user keys in file
+      assert:
+        that:
+          - "'[client.' + item.ceph_csi_user + ']' in (csi_keys_content.content | b64decode)"
+        fail_msg: "CSI user client.{{ item.ceph_csi_user }} key not found in keys file"
+        success_msg: "CSI user client.{{ item.ceph_csi_user }} key found in keys file"
+      loop: "{{ ceph.csi }}"
+      when:
+        - ceph.csi is defined
+        - csi_keys_content is defined
+        - csi_keys_content.content is defined
+
+    - name: Test CSI user authentication
+      command: ceph auth get-key client.{{ item.ceph_csi_user }}
+      register: csi_key_test
+      loop: "{{ ceph.csi }}"
+      when: ceph.csi is defined
+      changed_when: false
+
+    - name: Validate CSI user key retrieval
+      assert:
+        that:
+          - item.rc == 0
+          - item.stdout | length > 0
+        fail_msg: "Cannot retrieve key for client.{{ item.item.ceph_csi_user }}"
+        success_msg: "Key retrieval successful for client.{{ item.item.ceph_csi_user }}"
+      loop: "{{ csi_key_test.results }}"
+      when: csi_key_test.results is defined
+
+    - name: Display CSI validation summary
+      debug:
+        msg: |
+          ✅ CSI User Validation Complete
+          Users validated: {{ ceph.csi | length if ceph.csi is defined else 0 }}
+          {% if ceph.csi is defined %}
+          {% for user in ceph.csi %}
+          - client.{{ user.ceph_csi_user }}: {{ user.cluster_name }}
+          {% endfor %}
+          {% endif %}
+          Keys file: {{ 'Found' if csi_keys_file.stat.exists else 'Missing' }}

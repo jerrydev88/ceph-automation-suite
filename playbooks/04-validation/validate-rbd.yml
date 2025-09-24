@@ -1,0 +1,80 @@
+---
+- name: Validate RBD Configuration
+  hosts: mons[0]
+  become: true
+  vars_files:
+    - ../../ceph-vars.yml
+  tasks:
+    - name: Get list of pools
+      command: ceph osd lspools --format json
+      register: pool_list
+      changed_when: false
+
+    - name: Parse pool list
+      set_fact:
+        pools: "{{ pool_list.stdout | from_json | map(attribute='poolname') | list }}"
+
+    - name: Validate RBD pools from vars exist
+      assert:
+        that:
+          - "item.pool_name in pools"
+        fail_msg: "RBD pool {{ item.pool_name }} not found"
+        success_msg: "RBD pool {{ item.pool_name }} exists"
+      loop: "{{ ceph.rbd }}"
+      when: ceph.rbd is defined
+
+    - name: Check if RBD pool is initialized
+      command: rbd pool init {{ item.pool_name }}
+      loop: "{{ ceph.rbd }}"
+      when: ceph.rbd is defined
+      changed_when: false
+      ignore_errors: true
+
+    - name: List RBD images in each pool
+      command: rbd ls -p {{ item.pool_name }}
+      register: rbd_images
+      loop: "{{ ceph.rbd }}"
+      when: ceph.rbd is defined
+      changed_when: false
+
+    - name: Validate configured images exist
+      command: rbd info {{ item.0.pool_name }}/{{ item.1.image_name }}
+      register: image_info
+      with_subelements:
+        - "{{ ceph.rbd }}"
+        - images
+        - skip_missing: true
+      when:
+        - ceph.rbd is defined
+        - item.1.image_name is defined
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check pool application
+      command: ceph osd pool application get {{ item.pool_name }}
+      register: pool_app
+      loop: "{{ ceph.rbd }}"
+      when: ceph.rbd is defined
+      changed_when: false
+
+    - name: Validate RBD application is enabled
+      assert:
+        that:
+          - "'rbd' in item.stdout"
+        fail_msg: "RBD application not enabled for pool {{ item.item.pool_name }}"
+        success_msg: "RBD application enabled for pool {{ item.item.pool_name }}"
+      loop: "{{ pool_app.results }}"
+      when: pool_app.results is defined
+
+    - name: Get pool stats
+      command: ceph osd pool stats {{ item.pool_name }}
+      register: pool_stats
+      loop: "{{ ceph.rbd }}"
+      when: ceph.rbd is defined
+      changed_when: false
+
+    - name: Display pool statistics
+      debug:
+        msg: "Pool {{ item.item.pool_name }}: {{ item.stdout }}"
+      loop: "{{ pool_stats.results }}"
+      when: pool_stats.results is defined

@@ -1,0 +1,6 @@
+---
+- hosts: mons[0]
+  become: true
+  tasks:
+    - name: OSD 서비스 제거
+      command: ceph orch rm osd --force

@@ -1,0 +1,77 @@
+---
+# RGW User Management
+# Creates RGW users with specified permissions and capabilities
+#
+# Usage:
+# ansible-playbook -i hosts-scalable.yml playbooks/02-services/rgw-users.yml
+
+- name: Create RGW Users
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../ceph-vars.yml
+
+  tasks:
+    - name: Check if RGW user exists
+      ansible.builtin.shell:
+        cmd: "radosgw-admin user info --uid='{{ item.user_id }}'"
+      register: user_info
+      ignore_errors: true
+      loop: "{{ rgw_instance.users }}"
+      changed_when: false
+
+    # 각 사용자 검사 직후 바로 로깅
+    - name: Log user existence
+      ansible.builtin.debug:
+        msg: "User {{ item.user_id }} existence check returned {{ user_info_item.rc }}"
+      loop: "{{ rgw_instance.users }}"
+      loop_control:
+        extended: yes
+      vars:
+        user_info_item: "{{ user_info.results | selectattr('item.user_id', 'equalto', item.user_id) | first }}"
+
+    - name: Create RGW user if not exists
+      ansible.builtin.shell:
+        cmd: >
+          radosgw-admin user create --uid='{{ item.user_id }}' --display-name='{{ item.display_name }}'
+          --email='{{ item.email | default('') }}' --caps='buckets={{ item.caps | selectattr('type', 'equalto', 'buckets') | map(attribute='perm') | join(',') }};
+          metadata={{ item.caps | selectattr('type', 'equalto', 'metadata') | map(attribute='perm') | join(',') }};
+          usage={{ item.caps | selectattr('type', 'equalto', 'usage') | map(attribute='perm') | join(',') }};
+          zone={{ item.caps | selectattr('type', 'equalto', 'zone') | map(attribute='perm') | join(',') }}'
+          --gen-access-key --gen-secret
+      when: user_info.results | json_query("[?item.user_id==`{{ item.user_id }}`].rc") | first | int != 0
+      loop: "{{ rgw_instance.users }}"
+      ignore_errors: true
+
+    - name: Fetch RGW user information
+      ansible.builtin.shell:
+        cmd: "radosgw-admin user info --uid='{{ item.user_id }}'"
+      register: rgw_user_info
+      loop: "{{ rgw_instance.users }}"
+      ignore_errors: true
+
+    - name: Check if the CSV file exists and add header if not
+      delegate_to: localhost
+      stat:
+        path: "{{ ceph.rgw_user_creation_result_file }}"
+      register: csv_file
+
+    - name: Add CSV header if file does not exist
+      delegate_to: localhost
+      copy:
+        content: "User ID,Display Name,Email,Access Key,Secret Key\n"
+        dest: "{{ ceph.rgw_user_creation_result_file }}"
+        mode: '0600'  # Set file permissions to be readable and writable only by the owner
+      when: not csv_file.stat.exists
+
+    - name: Save user information to CSV file on local machine
+      delegate_to: localhost
+      lineinfile:
+        path: "{{ ceph.rgw_user_creation_result_file }}"
+        create: yes
+        line: "{{ item.item.user_id }},{{ item.item.display_name }},{{ item.item.email }},{{ (item.stdout | from_json)['keys'][0]['access_key'] | default('N/A') }},{{ (item.stdout | from_json)['keys'][0]['secret_key'] | default('N/A') }}"
+        insertafter: EOF
+        mode: '0600'  # Ensure the file permissions are secure
+      loop: "{{ rgw_user_info.results }}"
+      when: item.rc == 0 and (item.stdout | from_json)['keys'] is defined

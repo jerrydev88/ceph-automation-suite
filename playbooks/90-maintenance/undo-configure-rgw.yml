@@ -1,0 +1,59 @@
+---
+# Undo RGW Configuration
+# Removes RGW service and related configurations
+#
+# Usage:
+# ansible-playbook -i hosts-scalable.yml playbooks/90-maintenance/undo-configure-rgw.yml
+
+- name: Undo RGW Configuration
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../ceph-vars.yml
+
+  tasks:
+    - name: Confirm RGW removal
+      pause:
+        prompt: "This will remove RGW service '{{ rgw_instance.rgw_name }}'. Type 'yes' to continue"
+      register: confirm_removal
+
+    - name: Check confirmation
+      fail:
+        msg: "Operation cancelled by user"
+      when: confirm_removal.user_input != "yes"
+
+    - name: Remove RGW service
+      command: ceph orch rm rgw.{{ rgw_instance.rgw_name }}
+      register: rgw_removal
+      failed_when: false
+
+    - name: Wait for RGW removal
+      command: ceph orch ls | grep -c "rgw.{{ rgw_instance.rgw_name }}"
+      register: rgw_check
+      until: rgw_check.stdout | int == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+      changed_when: false
+
+    - name: Remove RGW pools
+      command: ceph osd pool rm {{ item }} {{ item }} --yes-i-really-really-mean-it
+      loop:
+        - .rgw.root
+        - default.rgw.control
+        - default.rgw.meta
+        - default.rgw.log
+        - default.rgw.buckets.index
+        - default.rgw.buckets.data
+      failed_when: false
+
+    - name: Display removal status
+      debug:
+        msg: |
+          ========================================
+          RGW Configuration Removal Complete
+          ========================================
+          RGW service removed: {{ rgw_instance.rgw_name }}
+          Status: {{ rgw_removal.stdout | default('Success') }}
+          ========================================
